@@ -106,7 +106,34 @@
         window.onload = async () => {
             const info = await (await fetch(`/api/envelope-info/${id}?idx=${signerIdx}`)).json();
             if (info.error) {
-                return document.body.innerHTML = `<div class="flex items-center justify-center min-h-screen"><h1 class="text-red-600 font-bold text-2xl">${info.error}</h1></div>`;
+                let icon = "⏳";
+                let title = "Not Your Turn Yet";
+                let description = info.message || info.error;
+                let colorClass = "text-amber-600";
+
+                if (info.error === "already_signed") {
+                    icon = "✅";
+                    title = "Signing Already Completed";
+                    description = `Hello <b>${info.signerName || 'Signer'}</b>, you have already completed your required signing portion for this document package. It has passed to the next step.`;
+                    colorClass = "text-emerald-600";
+                } else if (info.error === "not_your_turn") {
+                    icon = "⏳";
+                    title = "Waiting for Previous Signer";
+                    description = `It is not your turn to sign yet. The document package is currently waiting for <b>${info.currentSignerName}</b> to sign. You will automatically receive an email notification as soon as it is your turn!`;
+                    colorClass = "text-amber-600";
+                }
+
+                return document.body.innerHTML = `
+                <div class="flex items-center justify-center min-h-screen bg-slate-50 p-6">
+                    <div class="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full text-center border border-slate-200">
+                        <div class="text-5xl mb-4">${icon}</div>
+                        <h2 class="text-2xl font-bold ${colorClass} mb-3">${title}</h2>
+                        <p class="text-slate-600 text-sm leading-relaxed mb-6">${description}</p>
+                        <div class="bg-slate-100 p-4 rounded-xl text-xs text-slate-500 font-medium">
+                            📩 You will be notified by email when the document package is fully signed and finalized.
+                        </div>
+                    </div>
+                </div>`;
             }
 
             document.getElementById('statusMsg').innerText = `Signing as: ${info.signerName}`;

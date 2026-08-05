@@ -225,13 +225,31 @@ app.get('/sign/:id', (req, res) => res.sendFile(path.join(__dirname, 'signer.htm
 
 app.get('/api/envelope-info/:id', (req, res) => {
     const env = getEnvelope(req.params.id);
-    if (!env) return res.status(404).json({ error: "Not found" });
+    if (!env) return res.status(404).json({ error: "Document package not found or link has expired." });
     
     const idx = parseInt(req.query.idx) || 0;
-    if (idx !== env.currentRecipientIndex && env.status !== 'completed') {
-        return res.json({ error: "It is not your turn yet." });
+
+    // 1. If recipient has already signed (their index is less than current index)
+    if (idx < env.currentRecipientIndex) {
+        return res.json({
+            error: "already_signed",
+            signerName: env.recipients[idx] ? env.recipients[idx].name : "Signer",
+            message: "You have already completed signing this document."
+        });
     }
+
+    // 2. If recipient opened early (their index is greater than current index)
+    if (idx > env.currentRecipientIndex && env.status !== 'completed') {
+        const currentSigner = env.recipients[env.currentRecipientIndex];
+        return res.json({
+            error: "not_your_turn",
+            currentSignerName: currentSigner ? currentSigner.name : "previous signer",
+            message: `It is not your turn yet. Currently waiting for ${currentSigner ? currentSigner.name : 'previous signer'} to finish.`
+        });
+    }
+
     const signer = env.recipients[idx];
+    if (!signer) return res.status(400).json({ error: "Invalid recipient index" });
     
     // Filter fields pre-assigned to this recipient
     const myFields = (env.assignedFields || []).filter(f => f.recipientIndex === idx);
