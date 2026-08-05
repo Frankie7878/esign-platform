@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DocuSign-Style Guided Signing Desk</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Great+Vibes&display=swap" rel="stylesheet">
+    <script>pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>
+    <style>
+        .page-wrap { position: relative; margin-bottom: 24px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1); }
+        .assigned-guide-box {
+            position: absolute; cursor: pointer; border: 2px dashed #2563eb;
+            background: rgba(219, 234, 254, 0.85); color: #1e40af;
+            border-radius: 6px; z-index: 100; font-weight: 700; font-size: 13px;
+            display: flex; align-items: center; justify-content: center;
+            transition: all 0.2s ease; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+        }
+        .assigned-guide-box:hover {
+            border-color: #1d4ed8; background: rgba(191, 219, 254, 0.95);
+            transform: scale(1.02);
+        }
+        .assigned-guide-box.filled {
+            border-style: solid; border-color: #16a34a; background: rgba(240, 253, 244, 0.95);
+            color: #15803d;
+        }
+        .btn-delete-filled {
+            position: absolute; top: -8px; right: -8px;
+            background: #ef4444; color: white; border-radius: 50%; width: 20px; height: 20px;
+            font-size: 12px; font-weight: bold; line-height: 18px; text-align: center;
+            cursor: pointer; display: none; z-index: 110;
+        }
+        .assigned-guide-box.filled:hover .btn-delete-filled { display: block; }
+        @keyframes pulseGlow {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.4); }
+            50% { box-shadow: 0 0 0 8px rgba(37, 99, 235, 0); }
+        }
+        .pulse-box { animation: pulseGlow 2s infinite; }
+    </style>
+</head>
+<body class="bg-slate-100 min-h-screen text-slate-800 pb-20">
+
+    <!-- Top Header -->
+    <div class="fixed top-0 left-0 w-full bg-white shadow-md p-4 z-50 flex justify-between items-center px-6">
+        <div>
+            <h1 class="font-bold text-xl text-slate-900">✍️ Signing Desk</h1>
+            <p id="statusMsg" class="text-xs font-semibold text-slate-500">Loading document...</p>
+        </div>
+        <div class="flex items-center gap-3">
+            <span id="completionBadge" class="text-xs font-bold px-3 py-1.5 rounded-full bg-amber-100 text-amber-800">
+                0 / 0 fields filled
+            </span>
+            <!-- DocuSign-Style NEXT Arrow Guidance Button -->
+            <button id="nextGuidanceBtn" onclick="guideToNextField()" class="bg-amber-400 hover:bg-amber-500 text-amber-950 font-extrabold px-5 py-2.5 rounded-full shadow-lg border-2 border-amber-300 flex items-center gap-2 text-sm transition transform hover:scale-105 active:scale-95">
+                <span>🚀 START</span> ➔
+            </button>
+            <button onclick="finish()" id="finishBtn" disabled class="bg-slate-400 text-white px-6 py-2 rounded-lg font-bold shadow cursor-not-allowed transition">Finish</button>
+        </div>
+    </div>
+
+    <!-- PDF Pages Container -->
+    <div id="pdfContainer" class="mt-24 flex flex-col items-center"></div>
+
+    <!-- Floating DocuSign Arrow Guidance Widget -->
+    <div class="fixed bottom-6 right-6 z-40">
+        <button id="floatingNextBtn" onclick="guideToNextField()" class="bg-amber-400 hover:bg-amber-500 text-amber-950 font-black px-6 py-3.5 rounded-full shadow-2xl border-4 border-white flex items-center gap-3 text-base transition-all transform hover:scale-110 active:scale-95 cursor-pointer">
+            <span id="floatingNextText">🚀 START</span> ➔
+        </button>
+    </div>
+
+    <!-- Signature Modal -->
+    <div id="sigModal" class="fixed inset-0 bg-black/50 hidden z-50 flex items-center justify-center backdrop-blur-sm p-4">
+        <div class="bg-white p-6 rounded-xl w-[92%] max-w-sm shadow-2xl">
+            <h3 class="text-lg font-bold mb-4" id="modalTitle">Create Signature</h3>
+            <div class="flex gap-4 border-b mb-4">
+                <button onclick="switchTab('draw')" id="tabDraw" class="font-bold text-blue-600 border-b-2 border-blue-600 pb-1">Draw</button>
+                <button onclick="switchTab('type')" id="tabType" class="text-gray-500 pb-1">Type</button>
+            </div>
+            <div id="drawArea">
+                <canvas id="pad" width="340" height="150" class="w-full border bg-gray-50 rounded-lg cursor-crosshair"></canvas>
+                <button onclick="clearPad()" class="text-xs text-red-500 mt-2 hover:underline">Clear Canvas</button>
+            </div>
+            <div id="typeArea" class="hidden">
+                <input type="text" id="typeInput" class="w-full border p-3 rounded-lg text-3xl text-center focus:ring-2 focus:ring-blue-500 outline-none" style="font-family: 'Great Vibes', cursive;" placeholder="Type Name">
+            </div>
+            <div class="flex justify-end gap-2 mt-6">
+                <button onclick="closeModal()" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
+                <button onclick="applySignature()" class="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg shadow">Apply</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const id = window.location.pathname.split('/').pop();
+        const urlParams = new URLSearchParams(window.location.search);
+        const signerIdx = urlParams.get('idx');
+
+        let pdfDoc = null;
+        let assignedFields = [];
+        let savedSignature = null;
+        let savedInitial = null;
+        let activeTargetBox = null;
+        let sigPad = { canvas: null, ctx: null, drawing: false };
+
+        window.onload = async () => {
+            const info = await (await fetch(`/api/envelope-info/${id}?idx=${signerIdx}`)).json();
+            if (info.error) {
+                return document.body.innerHTML = `<div class="flex items-center justify-center min-h-screen"><h1 class="text-red-600 font-bold text-2xl">${info.error}</h1></div>`;
+            }
+
+            document.getElementById('statusMsg').innerText = `Signing as: ${info.signerName}`;
+            assignedFields = info.assignedFields || [];
+
+            const pdfData = await (await fetch(`/api/envelope/${id}`)).blob();
+            pdfDoc = await pdfjsLib.getDocument(URL.createObjectURL(pdfData)).promise;
+            
+            await renderPages();
+            setupSigPad();
+            updateCompletionStatus();
+        };
+
+        async function renderPages() {
+            const container = document.getElementById('pdfContainer');
+            container.innerHTML = '';
+            for (let i = 1; i <= pdfDoc.numPages; i++) {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'page-wrap bg-white';
+                wrapper.dataset.idx = i - 1;
+                const page = await pdfDoc.getPage(i);
+                const viewport = page.getViewport({ scale: 1.5 });
+                const canvas = document.createElement('canvas');
+                canvas.width = viewport.width; canvas.height = viewport.height;
+                wrapper.style.width = viewport.width + 'px'; wrapper.style.height = viewport.height + 'px';
+                await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+                wrapper.appendChild(canvas);
+
+                // Render pre-assigned guide boxes for this page
+                const pageFields = assignedFields.filter(f => f.pageIndex === (i - 1));
+                pageFields.forEach((field, fIdx) => {
+                    createGuideBox(wrapper, field, viewport.width, viewport.height);
+                });
+
+                container.appendChild(wrapper);
+            }
+        }
+
+        function createGuideBox(wrapper, field, pageW, pageH) {
+            const box = document.createElement('div');
+            box.className = 'assigned-guide-box pulse-box';
+            const left = pageW * parseFloat(field.xPercent);
+            const top = pageH * parseFloat(field.yPercent);
+            const width = pageW * parseFloat(field.wPercent);
+            const height = pageH * parseFloat(field.hPercent);
+
+            box.style.left = left + 'px';
+            box.style.top = top + 'px';
+            box.style.width = Math.max(width, 80) + 'px';
+            box.style.height = Math.max(height, 30) + 'px';
+
+            box.dataset.type = field.type;
+            box.dataset.pageIdx = field.pageIndex;
+            box.dataset.xPercent = field.xPercent;
+            box.dataset.yPercent = field.yPercent;
+            box.dataset.wPercent = field.wPercent;
+            box.dataset.hPercent = field.hPercent;
+
+            const toolLabels = {
+                'signature': '🖊️ Sign Here',
+                'initial': '🔤 Initial Here',
+                'date': '📅 Date Here',
+                'text': '📝 Text Here'
+            };
+
+            box.innerText = toolLabels[field.type] || 'Sign Here';
+
+            box.onclick = (e) => handleGuideBoxClick(e, box);
+            wrapper.appendChild(box);
+        }
+
+        function handleGuideBoxClick(e, box) {
+            if (box.classList.contains('filled')) return;
+            activeTargetBox = box;
+            const type = box.dataset.type;
+
+            if (type === 'signature') {
+                if (!savedSignature) openSigModal('signature');
+                else fillBoxWithImage(box, savedSignature, 'signature');
+            } else if (type === 'initial') {
+                if (!savedInitial) openSigModal('initial');
+                else fillBoxWithImage(box, savedInitial, 'initial');
+            } else if (type === 'date') {
+                const dateStr = new Date().toLocaleString([], {
+                    year: 'numeric', month: 'numeric', day: 'numeric',
+                    hour: '2-digit', minute: '2-digit'
+                });
+                fillBoxWithText(box, dateStr);
+            } else if (type === 'text') {
+                const val = prompt("Enter text for this field:", "");
+                if (val) fillBoxWithText(box, val);
+            }
+        }
+
+        function fillBoxWithImage(box, imgUrl, type) {
+            box.innerHTML = '';
+            box.classList.add('filled');
+            box.classList.remove('pulse-box');
+            box.dataset.val = imgUrl;
+
+            const img = document.createElement('img');
+            img.src = imgUrl;
+            img.style.width = '100%'; img.style.height = '100%'; img.style.objectFit = 'contain';
+            box.appendChild(img);
+
+            addDeleteBtn(box);
+            updateCompletionStatus();
+            setTimeout(() => guideToNextField(true), 300);
+        }
+
+        function fillBoxWithText(box, textVal) {
+            box.innerHTML = '';
+            box.classList.add('filled');
+            box.classList.remove('pulse-box');
+            box.dataset.val = textVal;
+
+            const span = document.createElement('span');
+            span.innerText = textVal;
+            span.style.fontSize = '12px'; span.style.fontWeight = '600';
+            box.appendChild(span);
+
+            addDeleteBtn(box);
+            updateCompletionStatus();
+            setTimeout(() => guideToNextField(true), 300);
+        }
+
+        function addDeleteBtn(box) {
+            const btn = document.createElement('div');
+            btn.className = 'btn-delete-filled';
+            btn.innerText = '×';
+            btn.onclick = (e) => {
+                e.stopPropagation();
+                box.classList.remove('filled');
+                box.classList.add('pulse-box');
+                delete box.dataset.val;
+                const toolLabels = {
+                    'signature': '🖊️ Sign Here', 'initial': '🔤 Initial Here',
+                    'date': '📅 Date Here', 'text': '📝 Text Here'
+                };
+                box.innerText = toolLabels[box.dataset.type] || 'Sign Here';
+                updateCompletionStatus();
+            };
+            box.appendChild(btn);
+        }
+
+        function guideToNextField(auto = false) {
+            const unfilledBoxes = Array.from(document.querySelectorAll('.assigned-guide-box:not(.filled)'));
+            if (unfilledBoxes.length === 0) {
+                if (!auto) finish();
+                return;
+            }
+
+            const targetBox = unfilledBoxes[0];
+            targetBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+            targetBox.classList.add('ring-4', 'ring-amber-400', 'scale-105');
+            setTimeout(() => {
+                targetBox.classList.remove('ring-4', 'ring-amber-400', 'scale-105');
+            }, 1200);
+        }
+
+        function updateCompletionStatus() {
+            const total = document.querySelectorAll('.assigned-guide-box').length;
+            const filled = document.querySelectorAll('.assigned-guide-box.filled').length;
+            const remaining = total - filled;
+
+            const badge = document.getElementById('completionBadge');
+            badge.innerText = `${filled} / ${total} fields filled`;
+
+            const nextBtn = document.getElementById('nextGuidanceBtn');
+            const floatBtn = document.getElementById('floatingNextBtn');
+            const floatText = document.getElementById('floatingNextText');
+            const finishBtn = document.getElementById('finishBtn');
+
+            if (total > 0 && remaining > 0) {
+                const label = filled === 0 ? '🚀 START' : `NEXT (${remaining} left)`;
+                nextBtn.innerHTML = `<span>${label}</span> ➔`;
+                nextBtn.className = 'bg-amber-400 hover:bg-amber-500 text-amber-950 font-extrabold px-5 py-2.5 rounded-full shadow-lg border-2 border-amber-300 flex items-center gap-2 text-sm transition transform hover:scale-105 active:scale-95 cursor-pointer';
+                
+                if (floatText && floatBtn) {
+                    floatText.innerText = label;
+                    floatBtn.className = 'bg-amber-400 hover:bg-amber-500 text-amber-950 font-black px-6 py-3.5 rounded-full shadow-2xl border-4 border-white flex items-center gap-3 text-base transition-all transform hover:scale-110 active:scale-95 cursor-pointer animate-pulse';
+                }
+            } else if (total > 0 && remaining === 0) {
+                nextBtn.innerHTML = `<span>✅ SUBMIT</span> ✔`;
+                nextBtn.className = 'bg-emerald-500 hover:bg-emerald-600 text-white font-extrabold px-5 py-2.5 rounded-full shadow-lg border-2 border-emerald-400 flex items-center gap-2 text-sm transition transform hover:scale-105 active:scale-95 cursor-pointer';
+                
+                if (floatText && floatBtn) {
+                    floatText.innerText = '✅ SUBMIT ENVELOPE';
+                    floatBtn.className = 'bg-emerald-500 hover:bg-emerald-600 text-white font-black px-6 py-3.5 rounded-full shadow-2xl border-4 border-white flex items-center gap-3 text-base transition-all transform hover:scale-110 active:scale-95 cursor-pointer animate-bounce';
+                }
+            }
+
+            if (filled > 0 && filled === total) {
+                badge.className = 'text-xs font-bold px-3 py-1.5 rounded-full bg-emerald-100 text-emerald-800';
+                finishBtn.disabled = false;
+                finishBtn.className = 'bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2 rounded-lg font-bold shadow cursor-pointer transition';
+            } else {
+                badge.className = 'text-xs font-bold px-3 py-1.5 rounded-full bg-amber-100 text-amber-800';
+                finishBtn.disabled = true;
+                finishBtn.className = 'bg-slate-400 text-white px-6 py-2 rounded-lg font-bold shadow cursor-not-allowed transition';
+            }
+        }
+
+        // --- SIGNATURE MODAL ---
+        function setupSigPad() {
+            sigPad.canvas = document.getElementById('pad');
+            sigPad.ctx = sigPad.canvas.getContext('2d');
+            sigPad.ctx.lineWidth = 2.5; 
+            sigPad.ctx.lineCap = 'round'; 
+            sigPad.ctx.lineJoin = 'round'; 
+            sigPad.ctx.strokeStyle = "#000";
+
+            // Prevent mobile scrolling while drawing on canvas
+            sigPad.canvas.style.touchAction = "none";
+
+            function getPos(e) {
+                const rect = sigPad.canvas.getBoundingClientRect();
+                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+                return {
+                    x: clientX - rect.left,
+                    y: clientY - rect.top
+                };
+            }
+
+            function startDraw(e) {
+                if (e.cancelable) e.preventDefault();
+                sigPad.drawing = true;
+                const pos = getPos(e);
+                sigPad.ctx.beginPath();
+                sigPad.ctx.moveTo(pos.x, pos.y);
+            }
+
+            function moveDraw(e) {
+                if (!sigPad.drawing) return;
+                if (e.cancelable) e.preventDefault();
+                const pos = getPos(e);
+                sigPad.ctx.lineTo(pos.x, pos.y);
+                sigPad.ctx.stroke();
+            }
+
+            function stopDraw() {
+                sigPad.drawing = false;
+            }
+
+            // Mouse Event Listeners
+            sigPad.canvas.addEventListener('mousedown', startDraw);
+            sigPad.canvas.addEventListener('mousemove', moveDraw);
+            window.addEventListener('mouseup', stopDraw);
+
+            // Mobile Touch Event Listeners (iOS Safari, Android Chrome)
+            sigPad.canvas.addEventListener('touchstart', startDraw, { passive: false });
+            sigPad.canvas.addEventListener('touchmove', moveDraw, { passive: false });
+            window.addEventListener('touchend', stopDraw);
+            window.addEventListener('touchcancel', stopDraw);
+        }
+
+        function openSigModal(type) {
+            document.getElementById('modalTitle').innerText = type === 'signature' ? "Create Signature" : "Create Initials";
+            document.getElementById('sigModal').classList.remove('hidden');
+            clearPad(); document.getElementById('typeInput').value = "";
+        }
+        function closeModal() { document.getElementById('sigModal').classList.add('hidden'); }
+        function switchTab(t) {
+            const isDraw = t === 'draw';
+            document.getElementById('drawArea').classList.toggle('hidden', !isDraw);
+            document.getElementById('typeArea').classList.toggle('hidden', isDraw);
+        }
+        function clearPad() { sigPad.ctx.clearRect(0, 0, 340, 150); }
+
+        function applySignature() {
+            let dataUrl;
+            if (!document.getElementById('drawArea').classList.contains('hidden')) {
+                dataUrl = sigPad.canvas.toDataURL();
+            } else {
+                const text = document.getElementById('typeInput').value.trim();
+                if (!text) return alert("Please type your name");
+                const c = document.createElement('canvas'); c.width = 400; c.height = 100;
+                const cx = c.getContext('2d'); cx.font = "60px 'Great Vibes'"; cx.fillText(text, 10, 70);
+                dataUrl = c.toDataURL();
+            }
+
+            const type = activeTargetBox ? activeTargetBox.dataset.type : 'signature';
+            if (type === 'signature') savedSignature = dataUrl;
+            if (type === 'initial') savedInitial = dataUrl;
+
+            closeModal();
+            if (activeTargetBox) {
+                fillBoxWithImage(activeTargetBox, dataUrl, type);
+            }
+        }
+
+        async function finish() {
+            const fields = [];
+            document.querySelectorAll('.assigned-guide-box.filled').forEach(box => {
+                fields.push({
+                    pageIndex: parseInt(box.dataset.pageIdx),
+                    xPercent: parseFloat(box.dataset.xPercent),
+                    yPercent: parseFloat(box.dataset.yPercent),
+                    wPercent: parseFloat(box.dataset.wPercent),
+                    hPercent: parseFloat(box.dataset.hPercent),
+                    type: box.dataset.type,
+                    value: box.dataset.val
+                });
+            });
+
+            if (fields.length === 0) return alert("Please fill your required assigned fields before finishing!");
+
+            const btn = document.getElementById('finishBtn'); btn.innerText = "Saving..."; btn.disabled = true;
+
+            const fd = new FormData();
+            fd.append('fields', JSON.stringify(fields));
+            fd.append('signerIndex', signerIdx);
+
+            try {
+                const res = await fetch(`/api/sign/${id}`, { method: 'POST', body: fd });
+                const data = await res.json();
+                if (data.success) {
+                    document.body.innerHTML = `
+                    <div class="flex flex-col items-center justify-center min-h-screen bg-slate-50">
+                        <div class="bg-white p-10 rounded-2xl shadow-xl text-center max-w-md border border-slate-200">
+                            <div class="text-6xl mb-4">✅</div>
+                            <h1 class="text-2xl font-bold text-slate-900 mb-2">Signing Completed!</h1>
+                            <p class="text-slate-600 text-sm">Thank you for signing. Your responses have been recorded and saved.</p>
+                        </div>
+                    </div>`;
+                } else {
+                    alert("Error: " + data.error);
+                }
+            } catch (e) {
+                alert("Network Error");
+            }
+            btn.innerText = "Finish"; btn.disabled = false;
+        }
+    </script>
+</body>
+</html>
