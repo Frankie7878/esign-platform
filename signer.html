@@ -281,9 +281,16 @@
         }
 
         function guideToNextField(auto = false) {
+            const totalBoxes = document.querySelectorAll('.assigned-guide-box').length;
             const unfilledBoxes = Array.from(document.querySelectorAll('.assigned-guide-box:not(.filled)'));
+            const filledBoxes = document.querySelectorAll('.assigned-guide-box.filled').length;
+
             if (unfilledBoxes.length === 0) {
-                if (!auto) finish();
+                if (totalBoxes > 0 && filledBoxes === totalBoxes) {
+                    if (!auto) finish();
+                } else if (!auto) {
+                    alert("No pre-assigned fields found for your account.");
+                }
                 return;
             }
 
