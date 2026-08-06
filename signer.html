@@ -150,7 +150,14 @@
 
             try {
                 const pdfArrayBuffer = await (await fetch(`/api/envelope/${id}`)).arrayBuffer();
-                pdfDoc = await pdfjsLib.getDocument({ data: new Uint8Array(pdfArrayBuffer) }).promise;
+                const loadingTask = pdfjsLib.getDocument({
+                    data: new Uint8Array(pdfArrayBuffer),
+                    stopAtErrors: false
+                });
+                loadingTask.onPassword = (updatePassword, reason) => {
+                    updatePassword("");
+                };
+                pdfDoc = await loadingTask.promise;
                 
                 await renderPages();
                 document.getElementById('pdfLoadingIndicator').style.display = 'none';

@@ -235,7 +235,14 @@
             pdfDocs = [];
             for (const file of selectedPdfFiles) {
                 const arrayBuffer = await file.arrayBuffer();
-                const doc = await pdfjsLib.getDocument(arrayBuffer).promise;
+                const loadingTask = pdfjsLib.getDocument({
+                    data: new Uint8Array(arrayBuffer),
+                    stopAtErrors: false
+                });
+                loadingTask.onPassword = (updatePassword, reason) => {
+                    updatePassword("");
+                };
+                const doc = await loadingTask.promise;
                 pdfDocs.push({ doc, name: file.name });
             }
 
