@@ -506,9 +506,9 @@ async function finalizeEnvelope(id, env) {
         const pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
         repairPdfPageTree(pdfDoc);
         try {
-            const form = pdfDoc.getForm();
-            if (form && form.getFields().length > 0) {
-                form.flatten();
+            const acroFormKey = pdfDoc.catalog.keys().find(k => k.toString() === '/AcroForm');
+            if (acroFormKey) {
+                pdfDoc.catalog.delete(acroFormKey);
             }
         } catch (e) {}
 
