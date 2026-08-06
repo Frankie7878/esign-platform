@@ -111,8 +111,12 @@ function generateIdentity() {
     cert.publicKey = keys.publicKey;
     cert.serialNumber = '01';
     cert.validity.notBefore = new Date();
-    cert.validity.notAfter.setFullYear(cert.validity.notBefore.getFullYear() + 1);
-    const attrs = [{ name: 'commonName', value: 'My Custom E-Sign' }];
+    cert.validity.notAfter.setFullYear(cert.validity.notBefore.getFullYear() + 5);
+    const attrs = [
+        { name: 'commonName', value: 'E-Sign Security Certification Authority' },
+        { name: 'organizationName', value: 'E-Sign Platform Legal Trust Services' },
+        { name: 'organizationalUnitName', value: 'Document Cryptographic Integrity Services' }
+    ];
     cert.setSubject(attrs); cert.setIssuer(attrs);
     cert.sign(keys.privateKey, forge.md.sha256.create());
     const p12Asn1 = forge.pkcs12.toPkcs12Asn1(keys.privateKey, cert, 'password', { algorithm: '3des' });
