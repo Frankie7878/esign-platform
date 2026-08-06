@@ -265,10 +265,37 @@ app.get('/api/download/:id', (req, res) => {
     }
 });
 
+app.post('/api/cancel/:id', (req, res) => {
+    try {
+        const id = req.params.id;
+        const env = getEnvelope(id);
+        if (!env) return res.status(404).json({ error: "Envelope not found" });
+
+        // Clean up associated PDF file if it exists
+        const filePath = env.completedFilePath || env.filePath;
+        if (filePath && fs.existsSync(filePath)) {
+            try { fs.unlinkSync(filePath); } catch(e){}
+        }
+
+        // Delete envelope from database
+        deleteEnvelope(id);
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 app.get('/api/envelope-info/:id', (req, res) => {
     const env = getEnvelope(req.params.id);
     if (!env) return res.status(404).json({ error: "Document package not found or link has expired." });
     
+    if (env.status === 'voided' || env.status === 'cancelled') {
+        return res.json({
+            error: "voided",
+            message: "This document package has been cancelled or voided by the sender."
+        });
+    }
+
     const idx = parseInt(req.query.idx) || 0;
 
     // 1. If recipient has already signed (their index is less than current index)

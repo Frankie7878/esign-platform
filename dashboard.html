@@ -219,14 +219,24 @@
                 
                 if (isCompleted) {
                     tdActions.innerHTML = `
-                        <a href="/api/download/${env.id}" target="_blank" class="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow transition">
-                            <span>📥 Download PDF</span>
-                        </a>`;
+                        <div class="flex items-center justify-end gap-1.5">
+                            <a href="/api/download/${env.id}" target="_blank" class="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow transition">
+                                <span>📥 Download PDF</span>
+                            </a>
+                            <button onclick="cancelEnvelope('${env.id}')" class="inline-flex items-center gap-1 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 font-bold px-2.5 py-1.5 rounded-lg text-xs transition cursor-pointer" title="Delete record">
+                                <span>🗑️</span>
+                            </button>
+                        </div>`;
                 } else {
                     tdActions.innerHTML = `
-                        <button onclick="resendEmail('${env.id}')" class="inline-flex items-center gap-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold px-3 py-1.5 rounded-lg text-xs transition cursor-pointer">
-                            <span>📧 Resend Email</span>
-                        </button>`;
+                        <div class="flex items-center justify-end gap-1.5">
+                            <button onclick="resendEmail('${env.id}')" class="inline-flex items-center gap-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold px-3 py-1.5 rounded-lg text-xs transition cursor-pointer">
+                                <span>📧 Resend</span>
+                            </button>
+                            <button onclick="cancelEnvelope('${env.id}')" class="inline-flex items-center gap-1 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 font-bold px-3 py-1.5 rounded-lg text-xs transition cursor-pointer" title="Cancel/Void Envelope">
+                                <span>🗑️ Cancel</span>
+                            </button>
+                        </div>`;
                 }
 
                 tr.appendChild(tdId);
@@ -241,6 +251,22 @@
             document.getElementById('statTotal').innerText = list.length;
             document.getElementById('statInProgress').innerText = inProgressCount;
             document.getElementById('statCompleted').innerText = completedCount;
+        }
+
+        async function cancelEnvelope(id) {
+            if (!confirm(`Are you sure you want to CANCEL and DELETE Envelope #${id}?\n\nThis will void all signing links for recipients.`)) return;
+            try {
+                const res = await fetch(`/api/cancel/${id}`, { method: 'POST' });
+                const data = await res.json();
+                if (data.success) {
+                    alert(`✅ Envelope #${id} has been cancelled.`);
+                    loadEnvelopes();
+                } else {
+                    alert("Error: " + data.error);
+                }
+            } catch (e) {
+                alert("Network Error");
+            }
         }
 
         async function resendEmail(id) {
