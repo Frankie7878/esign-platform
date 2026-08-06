@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=0.3, maximum-scale=3.0, user-scalable=yes">
     <title>DocuSign-Style Guided Signing Desk</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="/js/pdf.min.js"></script>
@@ -66,8 +66,10 @@
         <div class="text-slate-400 text-xs mt-1">Please wait a moment while document pages render</div>
     </div>
 
-    <!-- PDF Pages Container -->
-    <div id="pdfContainer" class="mt-4 flex flex-col items-center"></div>
+    <!-- PDF Pages Container (Horizontally Scrollable & Responsive) -->
+    <div class="w-full overflow-x-auto px-2 py-4 flex justify-center">
+        <div id="pdfContainer" class="flex flex-col items-center max-w-full"></div>
+    </div>
 
     <!-- Floating DocuSign Arrow Guidance Widget -->
     <div class="fixed bottom-6 right-6 z-40">
@@ -173,6 +175,13 @@
         async function renderPages() {
             const container = document.getElementById('pdfContainer');
             container.innerHTML = '';
+
+            // Calculate responsive render scale for Mobile / Tablet / Desktop
+            const maxScreenWidth = Math.min(window.innerWidth - 24, 850);
+            const firstPage = await pdfDoc.getPage(1);
+            const unscaledViewport = firstPage.getViewport({ scale: 1.0 });
+            const renderScale = Math.min(1.5, Math.max(0.5, maxScreenWidth / unscaledViewport.width));
+
             for (let i = 1; i <= pdfDoc.numPages; i++) {
                 try {
                     const wrapper = document.createElement('div');
@@ -180,7 +189,7 @@
                     wrapper.dataset.idx = i - 1;
                     
                     const page = await pdfDoc.getPage(i);
-                    const viewport = page.getViewport({ scale: 1.5 });
+                    const viewport = page.getViewport({ scale: renderScale });
                     const canvas = document.createElement('canvas');
                     canvas.width = viewport.width; canvas.height = viewport.height;
                     wrapper.style.width = viewport.width + 'px'; wrapper.style.height = viewport.height + 'px';

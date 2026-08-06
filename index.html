@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=0.3, maximum-scale=3.0, user-scalable=yes">
     <title>DocuSign-Style E-Sign Sender (Multi-PDF)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="/js/pdf.min.js"></script>
@@ -256,16 +256,21 @@
             container.innerHTML = '';
 
             let globalPageIndex = 0;
+            const maxScreenWidth = Math.min(window.innerWidth - 24, 850);
 
             for (const pdfObj of pdfDocs) {
                 const pdf = pdfObj.doc;
+                const firstPage = await pdf.getPage(1);
+                const unscaledViewport = firstPage.getViewport({ scale: 1.0 });
+                const renderScale = Math.min(1.5, Math.max(0.5, maxScreenWidth / unscaledViewport.width));
+
                 for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
                     const wrapper = document.createElement('div');
                     wrapper.className = 'designer-page bg-white shadow-lg';
                     wrapper.dataset.idx = globalPageIndex;
                     
                     const page = await pdf.getPage(pageNum);
-                    const viewport = page.getViewport({ scale: 1.5 });
+                    const viewport = page.getViewport({ scale: renderScale });
                     const canvas = document.createElement('canvas');
                     canvas.width = viewport.width; canvas.height = viewport.height;
                     wrapper.style.width = viewport.width + 'px'; wrapper.style.height = viewport.height + 'px';
