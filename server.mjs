@@ -7,6 +7,7 @@ import forge from 'node-forge';
 import nodemailer from 'nodemailer';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { execSync } from 'child_process';
 
 // --- IMPORT CONFIG ---
 import { CONFIG } from './config.mjs';
@@ -87,20 +88,19 @@ function repairPdfPageTree(doc) {
     }
 }
 
-async function stripPdfEncryption(rawPdfBuffer) {
+function stripPdfEncryptionFile(inputPath, outputPath) {
     try {
-        const doc = await PDFDocument.load(rawPdfBuffer, { ignoreEncryption: true });
-        repairPdfPageTree(doc);
-        doc.catalog.delete(PDFName.of("Encrypt"));
-        if (doc.context && doc.context.trailerInfo) {
-            delete doc.context.trailerInfo.Encrypt;
+        execSync(`qpdf --decrypt "${inputPath}" "${outputPath}"`, { stdio: 'ignore' });
+        if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 0) {
+            return true;
         }
-        const cleanBytes = await doc.save({ useObjectStreams: false });
-        return Buffer.from(cleanBytes);
     } catch (e) {
-        console.warn("⚠️ stripPdfEncryption fallback:", e.message);
-        return rawPdfBuffer;
+        if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 0) {
+            return true;
+        }
     }
+    try { fs.copyFileSync(inputPath, outputPath); } catch(e){}
+    return false;
 }
 
 // --- IDENTITY (Self-Signed Cert) ---
@@ -141,26 +141,19 @@ app.post('/api/send', upload.array('pdf'), async (req, res) => {
         const masterFilePath = path.join('uploads', `envelope_${envelopeId}.pdf`);
 
         if (req.files.length === 1) {
-            // Single PDF: Strip DRM Encrypt dictionary and repair page tree into clean unencrypted file
+            // Single PDF: Decrypt stream encryption with qpdf for 100% clean rendering
             const singleFile = req.files[0];
             fileNames.push(singleFile.originalname);
-            const rawBytes = fs.readFileSync(singleFile.path);
-
-            try {
-                const cleanBuffer = await stripPdfEncryption(rawBytes);
-                fs.writeFileSync(masterFilePath, cleanBuffer);
-            } catch (err) {
-                console.warn("⚠️ Fallback to direct file copy:", err.message);
-                fs.copyFileSync(singleFile.path, masterFilePath);
-            }
+            stripPdfEncryptionFile(singleFile.path, masterFilePath);
             try { fs.unlinkSync(singleFile.path); } catch(e){}
         } else {
-            // Multiple PDFs: Merge sequentially using pdf-lib
+            // Multiple PDFs: Decrypt & Merge sequentially using pdf-lib
             const mergedPdfDoc = await PDFDocument.create();
             for (const file of req.files) {
                 fileNames.push(file.originalname);
-                const rawBytes = fs.readFileSync(file.path);
-                const cleanBytes = await stripPdfEncryption(rawBytes);
+                const tempDecryptedPath = file.path + '_decrypted.pdf';
+                stripPdfEncryptionFile(file.path, tempDecryptedPath);
+                const cleanBytes = fs.readFileSync(tempDecryptedPath);
 
                 try {
                     const doc = await PDFDocument.load(cleanBytes, { ignoreEncryption: true });
@@ -170,8 +163,9 @@ app.post('/api/send', upload.array('pdf'), async (req, res) => {
                     console.warn(`⚠️ Could not copy pages from file ${file.originalname}:`, mergeErr.message);
                 }
 
-                // Clean up temporary upload file
+                // Clean up temporary files
                 try { fs.unlinkSync(file.path); } catch(e){}
+                try { fs.unlinkSync(tempDecryptedPath); } catch(e){}
             }
 
             const mergedBytes = await mergedPdfDoc.save({ useObjectStreams: false });
