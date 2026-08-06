@@ -206,6 +206,7 @@
         }
 
         function handleGuideBoxClick(e, box) {
+            if (e && e.stopPropagation) e.stopPropagation();
             if (box.classList.contains('filled')) return;
             activeTargetBox = box;
             const type = box.dataset.type;
@@ -287,12 +288,22 @@
             }
 
             const targetBox = unfilledBoxes[0];
+            
+            // 1. Smoothly scroll target box into the center of the screen
             targetBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
+            // 2. Highlighting ring effect
             targetBox.classList.add('ring-4', 'ring-amber-400', 'scale-105');
             setTimeout(() => {
                 targetBox.classList.remove('ring-4', 'ring-amber-400', 'scale-105');
             }, 1200);
+
+            // 3. Automatically trigger the field action after scrolling (if user clicked START/NEXT)
+            if (!auto) {
+                setTimeout(() => {
+                    handleGuideBoxClick(null, targetBox);
+                }, 350);
+            }
         }
 
         function updateCompletionStatus() {
