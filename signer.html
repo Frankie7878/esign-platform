@@ -139,8 +139,8 @@
             document.getElementById('statusMsg').innerText = `Signing as: ${info.signerName}`;
             assignedFields = info.assignedFields || [];
 
-            const pdfData = await (await fetch(`/api/envelope/${id}`)).blob();
-            pdfDoc = await pdfjsLib.getDocument(URL.createObjectURL(pdfData)).promise;
+            const pdfArrayBuffer = await (await fetch(`/api/envelope/${id}`)).arrayBuffer();
+            pdfDoc = await pdfjsLib.getDocument({ data: new Uint8Array(pdfArrayBuffer) }).promise;
             
             await renderPages();
             setupSigPad();
