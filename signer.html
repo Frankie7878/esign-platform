@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DocuSign-Style Guided Signing Desk</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="/js/pdf.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Great+Vibes&display=swap" rel="stylesheet">
-    <script>pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>
+    <script>pdfjsLib.GlobalWorkerOptions.workerSrc = '/js/pdf.worker.min.js';</script>
     <style>
         .page-wrap { position: relative; margin-bottom: 24px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1); }
         .assigned-guide-box {
@@ -60,7 +60,13 @@
     </div>
 
     <!-- PDF Pages Container -->
-    <div id="pdfContainer" class="mt-24 flex flex-col items-center"></div>
+    <div id="pdfContainer" class="mt-24 flex flex-col items-center">
+        <div id="pdfLoadingIndicator" class="flex flex-col items-center justify-center py-20">
+            <div class="animate-spin text-4xl mb-3">🌀</div>
+            <div class="text-slate-700 font-bold text-base">Loading document pages...</div>
+            <div class="text-slate-400 text-xs mt-1">Please wait a moment while document pages render</div>
+        </div>
+    </div>
 
     <!-- Floating DocuSign Arrow Guidance Widget -->
     <div class="fixed bottom-6 right-6 z-40">
@@ -139,12 +145,26 @@
             document.getElementById('statusMsg').innerText = `Signing as: ${info.signerName}`;
             assignedFields = info.assignedFields || [];
 
-            const pdfArrayBuffer = await (await fetch(`/api/envelope/${id}`)).arrayBuffer();
-            pdfDoc = await pdfjsLib.getDocument({ data: new Uint8Array(pdfArrayBuffer) }).promise;
-            
-            await renderPages();
-            setupSigPad();
-            updateCompletionStatus();
+            try {
+                const pdfArrayBuffer = await (await fetch(`/api/envelope/${id}`)).arrayBuffer();
+                pdfDoc = await pdfjsLib.getDocument({ data: new Uint8Array(pdfArrayBuffer) }).promise;
+                
+                await renderPages();
+                setupSigPad();
+                updateCompletionStatus();
+            } catch (pdfErr) {
+                console.error("PDF Load Error:", pdfErr);
+                const indicator = document.getElementById('pdfLoadingIndicator');
+                if (indicator) {
+                    indicator.innerHTML = `
+                        <div class="bg-red-50 border border-red-200 text-red-700 p-6 rounded-2xl text-center max-w-md shadow-lg my-10">
+                            <div class="text-4xl mb-2">⚠️</div>
+                            <div class="font-bold text-lg mb-1">Unable to Render Document</div>
+                            <div class="text-xs text-red-600 mb-4">${pdfErr.message || 'Please click reload to try again.'}</div>
+                            <button onclick="location.reload()" class="bg-red-600 hover:bg-red-700 text-white font-bold text-xs px-5 py-2.5 rounded-xl shadow transition cursor-pointer">🔄 Reload Document</button>
+                        </div>`;
+                }
+            }
         };
 
         async function renderPages() {
