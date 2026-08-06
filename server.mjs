@@ -87,25 +87,6 @@ function repairPdfPageTree(doc) {
     }
 }
 
-async function deepSanitizePdf(rawPdfBuffer) {
-    try {
-        const srcDoc = await PDFDocument.load(rawPdfBuffer, { ignoreEncryption: true });
-        repairPdfPageTree(srcDoc);
-
-        const cleanDoc = await PDFDocument.create();
-        const pageIndices = srcDoc.getPageIndices();
-        if (pageIndices.length > 0) {
-            const copiedPages = await cleanDoc.copyPages(srcDoc, pageIndices);
-            copiedPages.forEach(p => cleanDoc.addPage(p));
-            const cleanBytes = await cleanDoc.save({ useObjectStreams: false });
-            return Buffer.from(cleanBytes);
-        }
-    } catch (e) {
-        console.warn("⚠️ deepSanitizePdf fallback:", e.message);
-    }
-    return rawPdfBuffer;
-}
-
 // --- IDENTITY (Self-Signed Cert) ---
 let p12Buffer;
 function generateIdentity() {
@@ -144,36 +125,21 @@ app.post('/api/send', upload.array('pdf'), async (req, res) => {
         const masterFilePath = path.join('uploads', `envelope_${envelopeId}.pdf`);
 
         if (req.files.length === 1) {
+            // Single PDF: Copy pristine original file bytes directly to preserve 100% of graphics, fonts & layout
             const singleFile = req.files[0];
             fileNames.push(singleFile.originalname);
-            
-            let sanitizedSuccess = false;
-            try {
-                const rawBytes = fs.readFileSync(singleFile.path);
-                const sanitizedBytes = await deepSanitizePdf(rawBytes);
-                const doc = await PDFDocument.load(sanitizedBytes, { ignoreEncryption: true });
-                if (doc.getPageCount() > 0) {
-                    const cleanBytes = await doc.save({ useObjectStreams: false });
-                    fs.writeFileSync(masterFilePath, cleanBytes);
-                    sanitizedSuccess = true;
-                }
-            } catch (err) {
-                console.warn("⚠️ Deep sanitize single file failed, falling back to direct copy:", err.message);
-            }
-
-            if (!sanitizedSuccess) {
-                fs.copyFileSync(singleFile.path, masterFilePath);
-            }
+            fs.copyFileSync(singleFile.path, masterFilePath);
             try { fs.unlinkSync(singleFile.path); } catch(e){}
         } else {
+            // Multiple PDFs: Merge sequentially using pdf-lib
             const mergedPdfDoc = await PDFDocument.create();
             for (const file of req.files) {
                 fileNames.push(file.originalname);
                 const rawBytes = fs.readFileSync(file.path);
-                const sanitizedBytes = await deepSanitizePdf(rawBytes);
 
                 try {
-                    const doc = await PDFDocument.load(sanitizedBytes, { ignoreEncryption: true });
+                    const doc = await PDFDocument.load(rawBytes, { ignoreEncryption: true });
+                    repairPdfPageTree(doc);
                     const copiedPages = await mergedPdfDoc.copyPages(doc, doc.getPageIndices());
                     copiedPages.forEach(p => mergedPdfDoc.addPage(p));
                 } catch (mergeErr) {
@@ -184,12 +150,8 @@ app.post('/api/send', upload.array('pdf'), async (req, res) => {
                 try { fs.unlinkSync(file.path); } catch(e){}
             }
 
-            if (mergedPdfDoc.getPageCount() > 0) {
-                const mergedBytes = await mergedPdfDoc.save({ useObjectStreams: false });
-                fs.writeFileSync(masterFilePath, mergedBytes);
-            } else if (req.files[0] && fs.existsSync(req.files[0].path)) {
-                fs.copyFileSync(req.files[0].path, masterFilePath);
-            }
+            const mergedBytes = await mergedPdfDoc.save({ useObjectStreams: false });
+            fs.writeFileSync(masterFilePath, mergedBytes);
         }
 
         const originalFileName = fileNames.join(', ');
