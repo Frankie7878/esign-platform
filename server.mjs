@@ -125,10 +125,20 @@ app.post('/api/send', upload.array('pdf'), async (req, res) => {
         const masterFilePath = path.join('uploads', `envelope_${envelopeId}.pdf`);
 
         if (req.files.length === 1) {
-            // Single PDF: Copy pristine original file bytes directly to preserve 100% of graphics, fonts & layout
+            // Single PDF: Pass through pdf-lib to strip DRM/Owner password encryption and repair page trees
             const singleFile = req.files[0];
             fileNames.push(singleFile.originalname);
-            fs.copyFileSync(singleFile.path, masterFilePath);
+            const rawBytes = fs.readFileSync(singleFile.path);
+
+            try {
+                const doc = await PDFDocument.load(rawBytes, { ignoreEncryption: true });
+                repairPdfPageTree(doc);
+                const unencryptedBytes = await doc.save({ useObjectStreams: false });
+                fs.writeFileSync(masterFilePath, unencryptedBytes);
+            } catch (err) {
+                console.warn("⚠️ Fallback to direct file copy:", err.message);
+                fs.copyFileSync(singleFile.path, masterFilePath);
+            }
             try { fs.unlinkSync(singleFile.path); } catch(e){}
         } else {
             // Multiple PDFs: Merge sequentially using pdf-lib
