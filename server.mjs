@@ -505,6 +505,13 @@ async function finalizeEnvelope(id, env) {
         const pdfBytes = fs.readFileSync(env.filePath);
         const pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
         repairPdfPageTree(pdfDoc);
+        try {
+            const form = pdfDoc.getForm();
+            if (form && form.getFields().length > 0) {
+                form.flatten();
+            }
+        } catch (e) {}
+
         const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
         const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
