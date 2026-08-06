@@ -87,6 +87,22 @@ function repairPdfPageTree(doc) {
     }
 }
 
+async function stripPdfEncryption(rawPdfBuffer) {
+    try {
+        const doc = await PDFDocument.load(rawPdfBuffer, { ignoreEncryption: true });
+        repairPdfPageTree(doc);
+        doc.catalog.delete(PDFName.of("Encrypt"));
+        if (doc.context && doc.context.trailerInfo) {
+            delete doc.context.trailerInfo.Encrypt;
+        }
+        const cleanBytes = await doc.save({ useObjectStreams: false });
+        return Buffer.from(cleanBytes);
+    } catch (e) {
+        console.warn("⚠️ stripPdfEncryption fallback:", e.message);
+        return rawPdfBuffer;
+    }
+}
+
 // --- IDENTITY (Self-Signed Cert) ---
 let p12Buffer;
 function generateIdentity() {
@@ -125,10 +141,18 @@ app.post('/api/send', upload.array('pdf'), async (req, res) => {
         const masterFilePath = path.join('uploads', `envelope_${envelopeId}.pdf`);
 
         if (req.files.length === 1) {
-            // Single PDF: Copy pristine original file bytes directly to preserve 100% of graphics, fonts & layout
+            // Single PDF: Strip DRM Encrypt dictionary and repair page tree into clean unencrypted file
             const singleFile = req.files[0];
             fileNames.push(singleFile.originalname);
-            fs.copyFileSync(singleFile.path, masterFilePath);
+            const rawBytes = fs.readFileSync(singleFile.path);
+
+            try {
+                const cleanBuffer = await stripPdfEncryption(rawBytes);
+                fs.writeFileSync(masterFilePath, cleanBuffer);
+            } catch (err) {
+                console.warn("⚠️ Fallback to direct file copy:", err.message);
+                fs.copyFileSync(singleFile.path, masterFilePath);
+            }
             try { fs.unlinkSync(singleFile.path); } catch(e){}
         } else {
             // Multiple PDFs: Merge sequentially using pdf-lib
@@ -136,10 +160,10 @@ app.post('/api/send', upload.array('pdf'), async (req, res) => {
             for (const file of req.files) {
                 fileNames.push(file.originalname);
                 const rawBytes = fs.readFileSync(file.path);
+                const cleanBytes = await stripPdfEncryption(rawBytes);
 
                 try {
-                    const doc = await PDFDocument.load(rawBytes, { ignoreEncryption: true });
-                    repairPdfPageTree(doc);
+                    const doc = await PDFDocument.load(cleanBytes, { ignoreEncryption: true });
                     const copiedPages = await mergedPdfDoc.copyPages(doc, doc.getPageIndices());
                     copiedPages.forEach(p => mergedPdfDoc.addPage(p));
                 } catch (mergeErr) {
