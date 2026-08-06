@@ -87,6 +87,25 @@ function repairPdfPageTree(doc) {
     }
 }
 
+async function deepSanitizePdf(rawPdfBuffer) {
+    try {
+        const srcDoc = await PDFDocument.load(rawPdfBuffer, { ignoreEncryption: true });
+        repairPdfPageTree(srcDoc);
+
+        const cleanDoc = await PDFDocument.create();
+        const pageIndices = srcDoc.getPageIndices();
+        if (pageIndices.length > 0) {
+            const copiedPages = await cleanDoc.copyPages(srcDoc, pageIndices);
+            copiedPages.forEach(p => cleanDoc.addPage(p));
+            const cleanBytes = await cleanDoc.save({ useObjectStreams: false });
+            return Buffer.from(cleanBytes);
+        }
+    } catch (e) {
+        console.warn("⚠️ deepSanitizePdf fallback:", e.message);
+    }
+    return rawPdfBuffer;
+}
+
 // --- IDENTITY (Self-Signed Cert) ---
 let p12Buffer;
 function generateIdentity() {
@@ -124,34 +143,26 @@ app.post('/api/send', upload.array('pdf'), async (req, res) => {
         const fileNames = [];
         const masterFilePath = path.join('uploads', `envelope_${envelopeId}.pdf`);
 
-        if (req.files.length === 1) {
-            // Single PDF: Copy file directly to avoid page tree reconstruction issues on protected PDFs
-            const singleFile = req.files[0];
-            fileNames.push(singleFile.originalname);
-            fs.copyFileSync(singleFile.path, masterFilePath);
-            try { fs.unlinkSync(singleFile.path); } catch(e){}
-        } else {
-            // Multiple PDFs: Merge sequentially using pdf-lib
-            const mergedPdfDoc = await PDFDocument.create();
-            for (const file of req.files) {
-                fileNames.push(file.originalname);
-                const pdfBytes = fs.readFileSync(file.path);
-                try {
-                    const doc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
-                    repairPdfPageTree(doc);
-                    const copiedPages = await mergedPdfDoc.copyPages(doc, doc.getPageIndices());
-                    copiedPages.forEach(p => mergedPdfDoc.addPage(p));
-                } catch (mergeErr) {
-                    console.warn(`⚠️ Could not copy pages from file ${file.originalname}:`, mergeErr.message);
-                }
+        const mergedPdfDoc = await PDFDocument.create();
+        for (const file of req.files) {
+            fileNames.push(file.originalname);
+            const rawBytes = fs.readFileSync(file.path);
+            const sanitizedBytes = await deepSanitizePdf(rawBytes);
 
-                // Clean up temporary upload file
-                try { fs.unlinkSync(file.path); } catch(e){}
+            try {
+                const doc = await PDFDocument.load(sanitizedBytes, { ignoreEncryption: true });
+                const copiedPages = await mergedPdfDoc.copyPages(doc, doc.getPageIndices());
+                copiedPages.forEach(p => mergedPdfDoc.addPage(p));
+            } catch (mergeErr) {
+                console.warn(`⚠️ Could not copy pages from file ${file.originalname}:`, mergeErr.message);
             }
 
-            const mergedBytes = await mergedPdfDoc.save();
-            fs.writeFileSync(masterFilePath, mergedBytes);
+            // Clean up temporary upload file
+            try { fs.unlinkSync(file.path); } catch(e){}
         }
+
+        const mergedBytes = await mergedPdfDoc.save({ useObjectStreams: false });
+        fs.writeFileSync(masterFilePath, mergedBytes);
 
         const originalFileName = fileNames.join(', ');
         const emailSubject = `Please Sign document package (${fileNames.length} file${fileNames.length > 1 ? 's' : ''})`;
