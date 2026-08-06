@@ -438,8 +438,8 @@ app.post('/api/sign/:id', upload.none(), async (req, res) => {
             }
         }
 
-        // 3. Save PDF
-        const updatedPdfBytes = await pdfDoc.save();
+        // 3. Save PDF with disabled object streams to ensure maximum compatibility across PDF renderers
+        const updatedPdfBytes = await pdfDoc.save({ useObjectStreams: false });
         fs.writeFileSync(env.filePath, updatedPdfBytes);
 
         // 4. Update Audit History
