@@ -370,8 +370,14 @@ app.post('/api/sign/:id', upload.none(), async (req, res) => {
     try {
         const id = req.params.id;
         const env = getEnvelope(id);
-        const fields = JSON.parse(req.body.fields);
+        if (!env) return res.status(404).json({ error: "Envelope not found" });
+
         const idx = parseInt(req.body.signerIndex);
+        if (idx !== env.currentRecipientIndex) {
+            return res.status(400).json({ error: "It is not your turn to sign this envelope or duplicate submission detected." });
+        }
+
+        const fields = JSON.parse(req.body.fields);
         const signerInfo = env.recipients[idx];
 
         const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1';

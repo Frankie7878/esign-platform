@@ -528,7 +528,11 @@
             }
         }
 
+        let isSubmitting = false;
         async function finish() {
+            if (isSubmitting) return;
+            isSubmitting = true;
+
             const fields = [];
             document.querySelectorAll('.assigned-guide-box.filled').forEach(box => {
                 fields.push({
@@ -542,9 +546,13 @@
                 });
             });
 
-            if (fields.length === 0) return alert("Please fill your required assigned fields before finishing!");
+            if (fields.length === 0) {
+                isSubmitting = false;
+                return alert("Please fill your required assigned fields before finishing!");
+            }
 
-            const btn = document.getElementById('finishBtn'); btn.innerText = "Saving..."; btn.disabled = true;
+            const btn = document.getElementById('finishBtn'); 
+            if (btn) { btn.innerText = "Saving..."; btn.disabled = true; }
 
             const fd = new FormData();
             fd.append('fields', JSON.stringify(fields));
@@ -564,11 +572,14 @@
                     </div>`;
                 } else {
                     alert("Error: " + data.error);
+                    isSubmitting = false;
+                    if (btn) { btn.innerText = "Finish"; btn.disabled = false; }
                 }
             } catch (e) {
                 alert("Network Error");
+                isSubmitting = false;
+                if (btn) { btn.innerText = "Finish"; btn.disabled = false; }
             }
-            btn.innerText = "Finish"; btn.disabled = false;
         }
     </script>
 </body>
