@@ -164,6 +164,7 @@ app.post('/api/send', upload.array('pdf'), async (req, res) => {
 
         saveEnvelope(envelopeId, {
             status: 'in_progress',
+            createdAt: new Date().toISOString(),
             filePath: masterFilePath,
             originalName: originalFileName, 
             senderName: senderName,
@@ -218,10 +219,51 @@ async function notifyNextSigner(id) {
 }
 
 // ======================================================
-// 2. VIEW: SERVE PAGES
+// 2. VIEW: SERVE PAGES & DASHBOARD
 // ======================================================
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+app.get('/dashboard', (req, res) => res.sendFile(path.join(__dirname, 'dashboard.html')));
 app.get('/sign/:id', (req, res) => res.sendFile(path.join(__dirname, 'signer.html')));
+
+// --- DASHBOARD API ENDPOINTS ---
+app.get('/api/envelopes', (req, res) => {
+    const db = getDb();
+    const list = Object.keys(db).map(id => ({
+        id,
+        ...db[id]
+    }));
+    // Sort newest envelopes first
+    list.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+    res.json(list);
+});
+
+app.post('/api/resend/:id', async (req, res) => {
+    try {
+        const id = req.params.id;
+        const env = getEnvelope(id);
+        if (!env) return res.status(404).json({ error: "Envelope not found" });
+        if (env.status === 'completed') return res.status(400).json({ error: "Envelope is already completed" });
+
+        const signer = env.recipients[env.currentRecipientIndex];
+        if (!signer) return res.status(400).json({ error: "No signer at current index" });
+
+        await notifyNextSigner(id);
+        res.json({ success: true, sentTo: signer.email });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get('/api/download/:id', (req, res) => {
+    const env = getEnvelope(req.params.id);
+    if (!env) return res.status(404).send("Envelope not found");
+    const targetPath = env.completedFilePath || env.filePath;
+    if (fs.existsSync(targetPath)) {
+        res.download(path.resolve(targetPath), `Completed_${env.originalName || 'document.pdf'}`);
+    } else {
+        res.status(404).send("Completed document file not found");
+    }
+});
 
 app.get('/api/envelope-info/:id', (req, res) => {
     const env = getEnvelope(req.params.id);
@@ -460,8 +502,17 @@ async function finalizeEnvelope(id, env) {
             });
         }
         
-        deleteEnvelope(id);
-        if(fs.existsSync(env.filePath)) fs.unlinkSync(env.filePath);
+        // Save completed PDF file & update status in DB
+        const completedPath = path.join('uploads', `completed_${id}.pdf`);
+        fs.writeFileSync(completedPath, signedPdf);
+
+        env.status = 'completed';
+        env.completedAt = new Date().toISOString();
+        env.completedFilePath = completedPath;
+        saveEnvelope(id, env);
+
+        // Clean up temporary master file
+        try { if (fs.existsSync(env.filePath)) fs.unlinkSync(env.filePath); } catch(e){}
 
     } catch (e) {
         console.error("FINALIZE ERROR:", e);
