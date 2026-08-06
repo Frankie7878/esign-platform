@@ -152,12 +152,19 @@
                 const pdfArrayBuffer = await (await fetch(`/api/envelope/${id}`)).arrayBuffer();
                 const loadingTask = pdfjsLib.getDocument({
                     data: new Uint8Array(pdfArrayBuffer),
+                    password: '',
                     stopAtErrors: false
                 });
-                loadingTask.onPassword = (updatePassword, reason) => {
-                    updatePassword("");
+                loadingTask.onPassword = (updatePassword) => {
+                    if (typeof updatePassword === 'function') {
+                        try { updatePassword(""); } catch(e){}
+                    }
                 };
-                pdfDoc = await loadingTask.promise;
+                
+                pdfDoc = await Promise.race([
+                    loadingTask.promise,
+                    new Promise((_, reject) => setTimeout(() => reject(new Error("Document loading timed out. Please click reload to try again.")), 10000))
+                ]);
                 
                 await renderPages();
                 document.getElementById('pdfLoadingIndicator').style.display = 'none';

@@ -237,10 +237,13 @@
                 const arrayBuffer = await file.arrayBuffer();
                 const loadingTask = pdfjsLib.getDocument({
                     data: new Uint8Array(arrayBuffer),
+                    password: '',
                     stopAtErrors: false
                 });
-                loadingTask.onPassword = (updatePassword, reason) => {
-                    updatePassword("");
+                loadingTask.onPassword = (updatePassword) => {
+                    if (typeof updatePassword === 'function') {
+                        try { updatePassword(""); } catch(e){}
+                    }
                 };
                 const doc = await loadingTask.promise;
                 pdfDocs.push({ doc, name: file.name });
