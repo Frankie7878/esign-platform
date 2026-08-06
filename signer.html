@@ -168,6 +168,26 @@
                     createGuideBox(wrapper, field, viewport.width, viewport.height);
                 });
 
+                // Fallback: Allow clicking anywhere on canvas to place a signature/field
+                wrapper.onclick = (e) => {
+                    if (e.target.classList.contains('assigned-guide-box') || e.target.closest('.assigned-guide-box')) return;
+                    const rect = wrapper.getBoundingClientRect();
+                    const clickX = e.clientX - rect.left;
+                    const clickY = e.clientY - rect.top;
+
+                    const newField = {
+                        type: 'signature',
+                        pageIndex: parseInt(wrapper.dataset.idx),
+                        xPercent: clickX / rect.width,
+                        yPercent: clickY / rect.height,
+                        wPercent: 0.16,
+                        hPercent: 0.04
+                    };
+
+                    const box = createGuideBox(wrapper, newField, rect.width, rect.height);
+                    handleGuideBoxClick(e, box);
+                };
+
                 container.appendChild(wrapper);
             }
         }
@@ -203,6 +223,7 @@
 
             box.onclick = (e) => handleGuideBoxClick(e, box);
             wrapper.appendChild(box);
+            return box;
         }
 
         function handleGuideBoxClick(e, box) {
@@ -343,9 +364,18 @@
                     floatText.innerText = '✅ SUBMIT ENVELOPE';
                     floatBtn.className = 'bg-emerald-500 hover:bg-emerald-600 text-white font-black px-6 py-3.5 rounded-full shadow-2xl border-4 border-white flex items-center gap-3 text-base transition-all transform hover:scale-110 active:scale-95 cursor-pointer animate-bounce';
                 }
+            } else if (total === 0) {
+                const label = filled === 0 ? '👆 Click Page to Sign' : '✅ SUBMIT';
+                nextBtn.innerHTML = `<span>${label}</span>`;
+                nextBtn.className = filled === 0 ? 'bg-blue-600 hover:bg-blue-700 text-white font-extrabold px-5 py-2.5 rounded-full shadow-lg text-sm transition cursor-pointer' : 'bg-emerald-500 hover:bg-emerald-600 text-white font-extrabold px-5 py-2.5 rounded-full shadow-lg text-sm transition cursor-pointer';
+                
+                if (floatText && floatBtn) {
+                    floatText.innerText = label;
+                    floatBtn.className = filled === 0 ? 'bg-blue-600 hover:bg-blue-700 text-white font-black px-6 py-3.5 rounded-full shadow-2xl border-4 border-white flex items-center gap-3 text-base transition-all cursor-pointer' : 'bg-emerald-500 hover:bg-emerald-600 text-white font-black px-6 py-3.5 rounded-full shadow-2xl border-4 border-white flex items-center gap-3 text-base transition-all cursor-pointer animate-bounce';
+                }
             }
 
-            if (filled > 0 && filled === total) {
+            if (filled > 0 && (total === 0 || filled === total)) {
                 badge.className = 'text-xs font-bold px-3 py-1.5 rounded-full bg-emerald-100 text-emerald-800';
                 finishBtn.disabled = false;
                 finishBtn.className = 'bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2 rounded-lg font-bold shadow cursor-pointer transition';
