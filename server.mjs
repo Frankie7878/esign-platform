@@ -542,15 +542,9 @@ async function finalizeEnvelope(id, env) {
         });
         const signedPdf = await new SignPdf().sign(placeholderResult, p12Signature);
 
-        // Save completed PDF file & rebuild xref table with qpdf for 100% Adobe Acrobat Reader compatibility
+        // Save completed signed PDF directly to preserve 100% cryptographic signature integrity
         const completedPath = path.join('uploads', `completed_${id}.pdf`);
-        const tempSignedPath = path.join('uploads', `temp_signed_${id}.pdf`);
-        fs.writeFileSync(tempSignedPath, signedPdf);
-
-        safeQpdfRepair(tempSignedPath, completedPath);
-        try { if (fs.existsSync(tempSignedPath)) fs.unlinkSync(tempSignedPath); } catch(e){}
-
-        const finalCompletedBuffer = fs.readFileSync(completedPath);
+        fs.writeFileSync(completedPath, signedPdf);
 
         // Send final completed signed document PDF & Certificate to ALL recipients AND the Sender
         const finalEmails = new Set(env.recipients.map(r => r.email));
@@ -564,7 +558,7 @@ async function finalizeEnvelope(id, env) {
                 to: recipientEmail,
                 subject: `Completed: ${env.emailSubject}`,
                 text: `Hello,\n\nThe document package "${env.originalName}" has been fully signed by all parties. Attached is the final completed PDF with the Certificate of Completion.\n\nThank you!`,
-                attachments: [{ filename: `Completed_${env.originalName || 'document'}.pdf`, content: finalCompletedBuffer }]
+                attachments: [{ filename: `Completed_${env.originalName || 'document'}.pdf`, content: signedPdf }]
             });
         }
         
