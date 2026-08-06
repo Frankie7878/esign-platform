@@ -59,14 +59,15 @@
         </div>
     </div>
 
-    <!-- PDF Pages Container -->
-    <div id="pdfContainer" class="mt-24 flex flex-col items-center">
-        <div id="pdfLoadingIndicator" class="flex flex-col items-center justify-center py-20">
-            <div class="animate-spin text-4xl mb-3">🌀</div>
-            <div class="text-slate-700 font-bold text-base">Loading document pages...</div>
-            <div class="text-slate-400 text-xs mt-1">Please wait a moment while document pages render</div>
-        </div>
+    <!-- Document Loading Indicator -->
+    <div id="pdfLoadingIndicator" class="mt-24 flex flex-col items-center justify-center py-20">
+        <div class="animate-spin text-4xl mb-3">🌀</div>
+        <div class="text-slate-700 font-bold text-base">Loading document pages...</div>
+        <div class="text-slate-400 text-xs mt-1">Please wait a moment while document pages render</div>
     </div>
+
+    <!-- PDF Pages Container -->
+    <div id="pdfContainer" class="mt-4 flex flex-col items-center"></div>
 
     <!-- Floating DocuSign Arrow Guidance Widget -->
     <div class="fixed bottom-6 right-6 z-40">
@@ -150,14 +151,16 @@
                 pdfDoc = await pdfjsLib.getDocument({ data: new Uint8Array(pdfArrayBuffer) }).promise;
                 
                 await renderPages();
+                document.getElementById('pdfLoadingIndicator').style.display = 'none';
                 setupSigPad();
                 updateCompletionStatus();
             } catch (pdfErr) {
                 console.error("PDF Load Error:", pdfErr);
                 const indicator = document.getElementById('pdfLoadingIndicator');
                 if (indicator) {
+                    indicator.style.display = 'block';
                     indicator.innerHTML = `
-                        <div class="bg-red-50 border border-red-200 text-red-700 p-6 rounded-2xl text-center max-w-md shadow-lg my-10">
+                        <div class="bg-red-50 border border-red-200 text-red-700 p-6 rounded-2xl text-center max-w-md shadow-lg my-10 mx-auto">
                             <div class="text-4xl mb-2">⚠️</div>
                             <div class="font-bold text-lg mb-1">Unable to Render Document</div>
                             <div class="text-xs text-red-600 mb-4">${pdfErr.message || 'Please click reload to try again.'}</div>
@@ -171,44 +174,51 @@
             const container = document.getElementById('pdfContainer');
             container.innerHTML = '';
             for (let i = 1; i <= pdfDoc.numPages; i++) {
-                const wrapper = document.createElement('div');
-                wrapper.className = 'page-wrap bg-white';
-                wrapper.dataset.idx = i - 1;
-                const page = await pdfDoc.getPage(i);
-                const viewport = page.getViewport({ scale: 1.5 });
-                const canvas = document.createElement('canvas');
-                canvas.width = viewport.width; canvas.height = viewport.height;
-                wrapper.style.width = viewport.width + 'px'; wrapper.style.height = viewport.height + 'px';
-                await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-                wrapper.appendChild(canvas);
+                try {
+                    const wrapper = document.createElement('div');
+                    wrapper.className = 'page-wrap bg-white shadow-md rounded-lg overflow-hidden border border-slate-200';
+                    wrapper.dataset.idx = i - 1;
+                    
+                    const page = await pdfDoc.getPage(i);
+                    const viewport = page.getViewport({ scale: 1.5 });
+                    const canvas = document.createElement('canvas');
+                    canvas.width = viewport.width; canvas.height = viewport.height;
+                    wrapper.style.width = viewport.width + 'px'; wrapper.style.height = viewport.height + 'px';
+                    
+                    const ctx = canvas.getContext('2d');
+                    await page.render({ canvasContext: ctx, viewport }).promise;
+                    wrapper.appendChild(canvas);
 
-                // Render pre-assigned guide boxes for this page
-                const pageFields = assignedFields.filter(f => f.pageIndex === (i - 1));
-                pageFields.forEach((field, fIdx) => {
-                    createGuideBox(wrapper, field, viewport.width, viewport.height);
-                });
+                    // Render pre-assigned guide boxes for this page
+                    const pageFields = assignedFields.filter(f => f.pageIndex === (i - 1));
+                    pageFields.forEach((field, fIdx) => {
+                        createGuideBox(wrapper, field, viewport.width, viewport.height);
+                    });
 
-                // Fallback: Allow clicking anywhere on canvas to place a signature/field
-                wrapper.onclick = (e) => {
-                    if (e.target.classList.contains('assigned-guide-box') || e.target.closest('.assigned-guide-box')) return;
-                    const rect = wrapper.getBoundingClientRect();
-                    const clickX = e.clientX - rect.left;
-                    const clickY = e.clientY - rect.top;
+                    // Fallback: Allow clicking anywhere on canvas to place a signature/field
+                    wrapper.onclick = (e) => {
+                        if (e.target.classList.contains('assigned-guide-box') || e.target.closest('.assigned-guide-box')) return;
+                        const rect = wrapper.getBoundingClientRect();
+                        const clickX = e.clientX - rect.left;
+                        const clickY = e.clientY - rect.top;
 
-                    const newField = {
-                        type: 'signature',
-                        pageIndex: parseInt(wrapper.dataset.idx),
-                        xPercent: clickX / rect.width,
-                        yPercent: clickY / rect.height,
-                        wPercent: 0.16,
-                        hPercent: 0.04
+                        const newField = {
+                            type: 'signature',
+                            pageIndex: parseInt(wrapper.dataset.idx),
+                            xPercent: clickX / rect.width,
+                            yPercent: clickY / rect.height,
+                            wPercent: 0.16,
+                            hPercent: 0.04
+                        };
+
+                        const box = createGuideBox(wrapper, newField, rect.width, rect.height);
+                        handleGuideBoxClick(e, box);
                     };
 
-                    const box = createGuideBox(wrapper, newField, rect.width, rect.height);
-                    handleGuideBoxClick(e, box);
-                };
-
-                container.appendChild(wrapper);
+                    container.appendChild(wrapper);
+                } catch (pageErr) {
+                    console.error(`Page ${i} render error:`, pageErr);
+                }
             }
         }
 
