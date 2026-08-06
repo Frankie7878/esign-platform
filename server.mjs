@@ -547,11 +547,7 @@ async function finalizeEnvelope(id, env) {
         const tempSignedPath = path.join('uploads', `temp_signed_${id}.pdf`);
         fs.writeFileSync(tempSignedPath, signedPdf);
 
-        try {
-            execSync(`qpdf "${tempSignedPath}" "${completedPath}"`, { stdio: 'ignore' });
-        } catch (e) {
-            fs.writeFileSync(completedPath, signedPdf);
-        }
+        safeQpdfRepair(tempSignedPath, completedPath);
         try { if (fs.existsSync(tempSignedPath)) fs.unlinkSync(tempSignedPath); } catch(e){}
 
         const finalCompletedBuffer = fs.readFileSync(completedPath);
