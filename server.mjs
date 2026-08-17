@@ -88,6 +88,17 @@ function repairPdfPageTree(doc) {
     }
 }
 
+function safeQpdfRepair(inputPath, outputPath) {
+    try {
+        execSync(`qpdf "${inputPath}" "${outputPath}"`, { stdio: 'ignore' });
+    } catch (e) {}
+    if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 0) {
+        return true;
+    }
+    try { fs.copyFileSync(inputPath, outputPath); } catch (e) {}
+    return false;
+}
+
 function stripPdfEncryptionFile(inputPath, outputPath) {
     try {
         execSync(`qpdf --decrypt "${inputPath}" "${outputPath}"`, { stdio: 'ignore' });
