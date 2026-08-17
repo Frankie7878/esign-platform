@@ -116,6 +116,7 @@
                 <!-- Tools -->
                 <button id="toolSign" onclick="selectTool('signature')" class="tool-btn bg-blue-50 text-blue-700 border border-blue-200 px-3 py-1.5 rounded-lg text-sm font-bold hover:bg-blue-100 transition">🖊️ Signature</button>
                 <button id="toolInitial" onclick="selectTool('initial')" class="tool-btn bg-purple-50 text-purple-700 border border-purple-200 px-3 py-1.5 rounded-lg text-sm font-bold hover:bg-purple-100 transition">🔤 Initials</button>
+                <button id="toolName" onclick="selectTool('name')" class="tool-btn bg-indigo-50 text-indigo-700 border border-indigo-200 px-3 py-1.5 rounded-lg text-sm font-bold hover:bg-indigo-100 transition">👤 Print Name</button>
                 <button id="toolDate" onclick="selectTool('date')" class="tool-btn bg-emerald-50 text-emerald-700 border border-emerald-200 px-3 py-1.5 rounded-lg text-sm font-bold hover:bg-emerald-100 transition">📅 Date</button>
                 <button id="toolText" onclick="selectTool('text')" class="tool-btn bg-slate-100 text-slate-700 border border-slate-300 px-3 py-1.5 rounded-lg text-sm font-bold hover:bg-slate-200 transition">T Text</button>
 
@@ -298,7 +299,7 @@
         function selectTool(tool) {
             activeTool = tool;
             document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('ring-2', 'ring-blue-600', 'border-blue-600'));
-            const btnMap = { 'signature': 'toolSign', 'initial': 'toolInitial', 'date': 'toolDate', 'text': 'toolText' };
+            const btnMap = { 'signature': 'toolSign', 'initial': 'toolInitial', 'name': 'toolName', 'date': 'toolDate', 'text': 'toolText' };
             const btn = document.getElementById(btnMap[tool]);
             if (btn) btn.classList.add('ring-2', 'ring-blue-600', 'border-blue-600');
         }
@@ -318,6 +319,7 @@
             
             let w = 150, h = 50;
             if (activeTool === 'initial') { w = 90; h = 40; }
+            else if (activeTool === 'name') { w = 140; h = 32; }
             else if (activeTool === 'date') { w = 140; h = 32; }
             else if (activeTool === 'text') { w = 140; h = 32; }
 
@@ -341,7 +343,7 @@
             label.style.textAlign = 'center';
             label.style.lineHeight = '1.2';
             
-            const toolTitles = { 'signature': 'Signature', 'initial': 'Initials', 'date': 'Date', 'text': 'Text' };
+            const toolTitles = { 'signature': 'Signature', 'initial': 'Initials', 'name': 'Print Name', 'date': 'Date', 'text': 'Text' };
             label.innerHTML = `<div>${toolTitles[toolType]}</div><div style="font-size: 9px; opacity: 0.85;">(${rName})</div>`;
             el.appendChild(label);
 

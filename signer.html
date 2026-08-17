@@ -80,22 +80,37 @@
 
     <!-- Signature Modal -->
     <div id="sigModal" class="fixed inset-0 bg-black/50 hidden z-50 flex items-center justify-center backdrop-blur-sm p-4">
-        <div class="bg-white p-6 rounded-xl w-[92%] max-w-sm shadow-2xl">
+        <div class="bg-white p-6 rounded-xl w-[92%] max-w-md shadow-2xl">
             <h3 class="text-lg font-bold mb-4" id="modalTitle">Create Signature</h3>
-            <div class="flex gap-4 border-b mb-4">
-                <button onclick="switchTab('draw')" id="tabDraw" class="font-bold text-blue-600 border-b-2 border-blue-600 pb-1">Draw</button>
-                <button onclick="switchTab('type')" id="tabType" class="text-gray-500 pb-1">Type</button>
+            <div class="flex gap-4 border-b mb-4 text-sm font-bold">
+                <button onclick="switchTab('draw')" id="tabDraw" class="text-blue-600 border-b-2 border-blue-600 pb-1 cursor-pointer">🖊️ Draw</button>
+                <button onclick="switchTab('type')" id="tabType" class="text-slate-500 hover:text-slate-700 pb-1 cursor-pointer">⌨️ Type</button>
+                <button onclick="switchTab('upload')" id="tabUpload" class="text-slate-500 hover:text-slate-700 pb-1 cursor-pointer">📁 Upload</button>
             </div>
             <div id="drawArea">
-                <canvas id="pad" width="340" height="150" class="w-full border bg-gray-50 rounded-lg cursor-crosshair"></canvas>
-                <button onclick="clearPad()" class="text-xs text-red-500 mt-2 hover:underline">Clear Canvas</button>
+                <canvas id="pad" width="340" height="150" class="w-full border bg-gray-50 rounded-lg cursor-crosshair touch-none"></canvas>
+                <button onclick="clearPad()" class="text-xs text-red-500 mt-2 hover:underline cursor-pointer">Clear Canvas</button>
             </div>
             <div id="typeArea" class="hidden">
                 <input type="text" id="typeInput" class="w-full border p-3 rounded-lg text-3xl text-center focus:ring-2 focus:ring-blue-500 outline-none" style="font-family: 'Great Vibes', cursive;" placeholder="Type Name">
             </div>
+            <div id="uploadArea" class="hidden">
+                <div id="uploadDropzone" onclick="document.getElementById('sigFileInput').click()" class="border-2 border-dashed border-blue-300 bg-blue-50/50 hover:bg-blue-50 p-6 rounded-xl text-center cursor-pointer transition">
+                    <div class="text-3xl mb-2">📸</div>
+                    <div class="text-xs font-bold text-slate-700">Click or Drag & Drop image here</div>
+                    <div class="text-[10px] text-slate-400 mt-1">Supports PNG, JPG, JPEG, WebP, SVG (Max 5MB)</div>
+                    <input type="file" id="sigFileInput" accept="image/*" class="hidden" onchange="handleSigFileUpload(event)">
+                </div>
+                <div id="uploadPreviewWrap" class="hidden mt-3 text-center">
+                    <div class="relative inline-block border rounded-lg p-2 bg-slate-50 max-h-[140px]">
+                        <img id="uploadPreviewImg" class="max-h-[120px] max-w-full object-contain mx-auto">
+                        <button onclick="resetSigUpload()" class="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 text-xs font-bold flex items-center justify-center hover:bg-red-600 shadow cursor-pointer">×</button>
+                    </div>
+                </div>
+            </div>
             <div class="flex justify-end gap-2 mt-6">
-                <button onclick="closeModal()" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
-                <button onclick="applySignature()" class="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg shadow">Apply</button>
+                <button onclick="closeModal()" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-bold text-sm cursor-pointer">Cancel</button>
+                <button onclick="applySignature()" class="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg shadow text-sm cursor-pointer">Apply</button>
             </div>
         </div>
     </div>
@@ -146,6 +161,7 @@
             }
 
             document.getElementById('statusMsg').innerText = `Signing as: ${info.signerName}`;
+            window.signerName = info.signerName || "";
             assignedFields = info.assignedFields || [];
 
             try {
@@ -268,6 +284,7 @@
             const toolLabels = {
                 'signature': '🖊️ Sign Here',
                 'initial': '🔤 Initial Here',
+                'name': '👤 Name Here',
                 'date': '📅 Date Here',
                 'text': '📝 Text Here'
             };
@@ -291,6 +308,12 @@
             } else if (type === 'initial') {
                 if (!savedInitial) openSigModal('initial');
                 else fillBoxWithImage(box, savedInitial, 'initial');
+            } else if (type === 'name') {
+                const defaultName = window.signerName || "";
+                const val = prompt("Confirm / Enter Printed Legal Name:", defaultName);
+                if (val !== null && val.trim() !== "") {
+                    fillBoxWithText(box, val.trim());
+                }
             } else if (type === 'date') {
                 const dateStr = new Date().toLocaleString([], {
                     year: 'numeric', month: 'numeric', day: 'numeric',
@@ -346,7 +369,7 @@
                 delete box.dataset.val;
                 const toolLabels = {
                     'signature': '🖊️ Sign Here', 'initial': '🔤 Initial Here',
-                    'date': '📅 Date Here', 'text': '📝 Text Here'
+                    'name': '👤 Name Here', 'date': '📅 Date Here', 'text': '📝 Text Here'
                 };
                 box.innerText = toolLabels[box.dataset.type] || 'Sign Here';
                 updateCompletionStatus();
@@ -493,32 +516,85 @@
             window.addEventListener('touchcancel', stopDraw);
         }
 
+        let currentTab = 'draw';
+        let uploadedSigDataUrl = null;
+        let currentModalType = 'signature';
+
         function openSigModal(type) {
+            currentModalType = type;
             document.getElementById('modalTitle').innerText = type === 'signature' ? "Create Signature" : "Create Initials";
             document.getElementById('sigModal').classList.remove('hidden');
-            clearPad(); document.getElementById('typeInput').value = "";
+            clearPad(); 
+            document.getElementById('typeInput').value = "";
+            resetSigUpload();
+            switchTab('draw');
         }
         function closeModal() { document.getElementById('sigModal').classList.add('hidden'); }
+        
         function switchTab(t) {
-            const isDraw = t === 'draw';
-            document.getElementById('drawArea').classList.toggle('hidden', !isDraw);
-            document.getElementById('typeArea').classList.toggle('hidden', isDraw);
+            currentTab = t;
+            document.getElementById('drawArea').classList.toggle('hidden', t !== 'draw');
+            document.getElementById('typeArea').classList.toggle('hidden', t !== 'type');
+            document.getElementById('uploadArea').classList.toggle('hidden', t !== 'upload');
+
+            document.getElementById('tabDraw').className = t === 'draw' ? 'font-bold text-blue-600 border-b-2 border-blue-600 pb-1 cursor-pointer' : 'text-slate-500 font-bold hover:text-slate-700 pb-1 cursor-pointer';
+            document.getElementById('tabType').className = t === 'type' ? 'font-bold text-blue-600 border-b-2 border-blue-600 pb-1 cursor-pointer' : 'text-slate-500 font-bold hover:text-slate-700 pb-1 cursor-pointer';
+            document.getElementById('tabUpload').className = t === 'upload' ? 'font-bold text-blue-600 border-b-2 border-blue-600 pb-1 cursor-pointer' : 'text-slate-500 font-bold hover:text-slate-700 pb-1 cursor-pointer';
         }
+
+        function handleSigFileUpload(e) {
+            const file = e.target.files ? e.target.files[0] : (e.dataTransfer ? e.dataTransfer.files[0] : null);
+            if (!file) return;
+            if (!file.type.startsWith('image/')) return alert("Please select a valid image file.");
+
+            const reader = new FileReader();
+            reader.onload = (evt) => {
+                const img = new Image();
+                img.onload = () => {
+                    const c = document.createElement('canvas');
+                    c.width = img.naturalWidth || 400;
+                    c.height = img.naturalHeight || 150;
+                    const ctx = c.getContext('2d');
+                    ctx.drawImage(img, 0, 0);
+                    uploadedSigDataUrl = c.toDataURL('image/png');
+
+                    document.getElementById('uploadDropzone').classList.add('hidden');
+                    document.getElementById('uploadPreviewWrap').classList.remove('hidden');
+                    document.getElementById('uploadPreviewImg').src = uploadedSigDataUrl;
+                };
+                img.src = evt.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function resetSigUpload() {
+            uploadedSigDataUrl = null;
+            const input = document.getElementById('sigFileInput');
+            if (input) input.value = '';
+            const dropzone = document.getElementById('uploadDropzone');
+            if (dropzone) dropzone.classList.remove('hidden');
+            const wrap = document.getElementById('uploadPreviewWrap');
+            if (wrap) wrap.classList.add('hidden');
+        }
+
         function clearPad() { sigPad.ctx.clearRect(0, 0, 340, 150); }
 
         function applySignature() {
             let dataUrl;
-            if (!document.getElementById('drawArea').classList.contains('hidden')) {
+            if (currentTab === 'draw') {
                 dataUrl = sigPad.canvas.toDataURL();
-            } else {
+            } else if (currentTab === 'type') {
                 const text = document.getElementById('typeInput').value.trim();
                 if (!text) return alert("Please type your name");
                 const c = document.createElement('canvas'); c.width = 400; c.height = 100;
                 const cx = c.getContext('2d'); cx.font = "60px 'Great Vibes'"; cx.fillText(text, 10, 70);
                 dataUrl = c.toDataURL();
+            } else if (currentTab === 'upload') {
+                if (!uploadedSigDataUrl) return alert("Please select and upload a signature image file first.");
+                dataUrl = uploadedSigDataUrl;
             }
 
-            const type = activeTargetBox ? activeTargetBox.dataset.type : 'signature';
+            const type = activeTargetBox ? activeTargetBox.dataset.type : currentModalType;
             if (type === 'signature') savedSignature = dataUrl;
             if (type === 'initial') savedInitial = dataUrl;
 
