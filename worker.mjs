@@ -5,9 +5,40 @@ const app = new Hono();
 
 const GITHUB_CLIENT_ID = 'Ov23liTMskA0wVZzq2ee';
 const GITHUB_CLIENT_SECRET = '03bc8d55baa1b578e1ccc95787494b25e76c997d';
+const BACKEND_URL = 'https://broadly-cuticolor-lavelle.ngrok-free.dev';
 
 // Global Memory Store Fallback
 const ENVELOPES = {};
+
+// Helper: Proxy API Requests to Live Active Node Engine (Gmail Nodemailer & database.json)
+async function proxyToBackend(c) {
+    const url = new URL(c.req.url);
+    const targetUrl = `${BACKEND_URL}${url.pathname}${url.search}`;
+    
+    try {
+        const reqHeaders = new Headers(c.req.raw.headers);
+        reqHeaders.set('host', 'broadly-cuticolor-lavelle.ngrok-free.dev');
+        reqHeaders.set('ngrok-skip-browser-warning', 'true');
+
+        const fetchOpts = {
+            method: c.req.method,
+            headers: reqHeaders
+        };
+
+        if (['POST', 'PUT', 'PATCH'].includes(c.req.method)) {
+            fetchOpts.body = c.req.raw.body;
+            fetchOpts.duplex = 'half';
+        }
+
+        const res = await fetch(targetUrl, fetchOpts);
+        if (res.ok || res.status < 500) {
+            return res;
+        }
+    } catch(err) {
+        console.warn("Backend proxy failed, using Worker local fallback:", err.message);
+    }
+    return null;
+}
 
 // Helper: Send Transactional Email via Mailchannels (Free for Cloudflare Workers)
 async function sendWorkerEmail({ toEmail, toName, subject, htmlContent }) {
@@ -108,6 +139,9 @@ app.get('/dashboard', (c) => c.redirect('/dashboard.html'));
 
 // API: Send Envelope (Upload PDFs & Create Chain)
 app.post('/api/send', async (c) => {
+    const proxied = await proxyToBackend(c);
+    if (proxied) return proxied;
+
     try {
         const body = await c.req.parseBody({ all: true });
         const pdfFiles = Array.isArray(body['pdf']) ? body['pdf'] : (body['pdf'] ? [body['pdf']] : []);
@@ -121,7 +155,6 @@ app.post('/api/send', async (c) => {
 
         const envelopeId = Math.random().toString(36).substring(2, 10).toUpperCase();
         
-        // Merge PDFs in memory using pdf-lib
         const mergedDoc = await PDFDocument.create();
         const fileNames = [];
         for (const file of pdfFiles) {
@@ -158,7 +191,6 @@ app.post('/api/send', async (c) => {
             try { await c.env.ESIGN_KV.put(`env_${envelopeId}`, JSON.stringify(envObj)); } catch(e){}
         }
 
-        // Send Email Notification to First Signer via Mailchannels
         if (recipients.length > 0) {
             const firstSigner = recipients[0];
             const signUrl = `https://docusign.frank-zhang.com/signer.html?id=${envelopeId}`;
@@ -172,10 +204,8 @@ app.post('/api/send', async (c) => {
                         <p style="color: #334155; font-size: 14px;">Hello <b>${firstSigner.name}</b>,</p>
                         <p style="color: #334155; font-size: 14px;"><b>${senderName}</b> has sent you a document package (<b>${envObj.originalName}</b>) for your electronic signature.</p>
                         <div style="margin: 28px 0; text-align: center;">
-                            <a href="${signUrl}" style="background-color: #2563eb; color: #ffffff; padding: 14px 30px; font-weight: bold; border-radius: 8px; text-decoration: none; display: inline-block; font-size: 15px; shadow: 0 4px 6px -1px rgba(0,0,0,0.1);">Review & Sign Document</a>
+                            <a href="${signUrl}" style="background-color: #2563eb; color: #ffffff; padding: 14px 30px; font-weight: bold; border-radius: 8px; text-decoration: none; display: inline-block; font-size: 15px;">Review & Sign Document</a>
                         </div>
-                        <hr style="border: none; border-top: 1px solid #f1f5f9; margin: 24px 0;">
-                        <p style="font-size: 11px; color: #94a3b8; margin: 0;">Direct Link: <a href="${signUrl}" style="color: #3b82f6;">${signUrl}</a></p>
                     </div>
                 `
             });
@@ -190,6 +220,9 @@ app.post('/api/send', async (c) => {
 
 // API: Fetch All Envelopes for Dashboard
 app.get('/api/envelopes', async (c) => {
+    const proxied = await proxyToBackend(c);
+    if (proxied) return proxied;
+
     if (c.env && c.env.ESIGN_KV) {
         try {
             const list = await c.env.ESIGN_KV.list({ prefix: 'env_' });
@@ -206,6 +239,9 @@ app.get('/api/envelopes', async (c) => {
 
 // API: Fetch Single Envelope Info / PDF
 app.get('/api/envelope/:id', async (c) => {
+    const proxied = await proxyToBackend(c);
+    if (proxied) return proxied;
+
     const id = c.req.param('id');
     let env = ENVELOPES[id];
     if (!env && c.env && c.env.ESIGN_KV) {
@@ -233,6 +269,9 @@ app.get('/api/envelope/:id', async (c) => {
 
 // API: Resend Notification Email to Current Signer
 app.post('/api/resend/:id', async (c) => {
+    const proxied = await proxyToBackend(c);
+    if (proxied) return proxied;
+
     try {
         const id = c.req.param('id');
         let env = ENVELOPES[id];
@@ -273,7 +312,10 @@ app.post('/api/resend/:id', async (c) => {
 });
 
 // API: Submit Recipient Signature
-app.post('/api/sign', async (c) => {
+app.post('/api/sign/:id', async (c) => {
+    const proxied = await proxyToBackend(c);
+    if (proxied) return proxied;
+
     try {
         const body = await c.req.json();
         const { envelopeId, fields } = body;
@@ -330,27 +372,6 @@ app.post('/api/sign', async (c) => {
         ENVELOPES[envelopeId] = env;
         if (c.env && c.env.ESIGN_KV) {
             try { await c.env.ESIGN_KV.put(`env_${envelopeId}`, JSON.stringify(env)); } catch(e){}
-        }
-
-        // Notify Next Signer if in_progress
-        if (env.status === 'in_progress' && env.recipients[env.currentRecipientIndex]) {
-            const nextSigner = env.recipients[env.currentRecipientIndex];
-            const signUrl = `https://docusign.frank-zhang.com/signer.html?id=${envelopeId}`;
-            await sendWorkerEmail({
-                toEmail: nextSigner.email,
-                toName: nextSigner.name,
-                subject: `Your Turn to Sign: ${env.originalName}`,
-                htmlContent: `
-                    <div style="font-family: Arial, sans-serif; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; max-width: 550px; margin: 0 auto; background-color: #ffffff;">
-                        <h2 style="color: #0f172a; margin-top: 0; font-size: 20px;">✍️ Your Turn to Sign</h2>
-                        <p style="color: #334155; font-size: 14px;">Hello <b>${nextSigner.name}</b>,</p>
-                        <p style="color: #334155; font-size: 14px;">It is now your turn to sign the document package (<b>${env.originalName}</b>).</p>
-                        <div style="margin: 28px 0; text-align: center;">
-                            <a href="${signUrl}" style="background-color: #2563eb; color: #ffffff; padding: 14px 30px; font-weight: bold; border-radius: 8px; text-decoration: none; display: inline-block; font-size: 15px;">Review & Sign Document</a>
-                        </div>
-                    </div>
-                `
-            });
         }
 
         return c.json({ success: true, completed: env.status === 'completed' });
