@@ -46,6 +46,38 @@ function deleteEnvelope(id) {
     fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
 }
 
+function getP12CertificateBuffer() {
+    const certPath = path.join(__dirname, 'certificate.p12');
+    if (fs.existsSync(certPath)) {
+        return fs.readFileSync(certPath);
+    }
+    const keys = forge.pki.rsa.generateKeyPair(2048);
+    const cert = forge.pki.createCertificate();
+    cert.publicKey = keys.publicKey;
+    cert.serialNumber = '01';
+    cert.validity.notBefore = new Date();
+    cert.validity.notAfter = new Date();
+    cert.validity.notAfter.setFullYear(cert.validity.notBefore.getFullYear() + 10);
+
+    const attrs = [{
+        name: 'commonName',
+        value: 'E-Sign Security Certification Authority'
+    }, {
+        name: 'organizationName',
+        value: 'E-Sign Platform Legal Trust Services'
+    }];
+
+    cert.setSubject(attrs);
+    cert.setIssuer(attrs);
+    cert.sign(keys.privateKey, forge.md.sha256.create());
+
+    const p12Asn1 = forge.pkcs12.toPkcs12Asn1(keys.privateKey, [cert], 'password');
+    const p12Der = forge.asn1.toDer(p12Asn1).getBytes();
+    const buf = Buffer.from(p12Der, 'binary');
+    try { fs.writeFileSync(certPath, buf); } catch(e){}
+    return buf;
+}
+
 function repairPdfPageTree(doc) {
     try {
         doc.getPages();
@@ -648,6 +680,7 @@ async function finalizeEnvelope(id, env) {
         const pdfWithAudit = await pdfDoc.save({ useObjectStreams: false });
         const pdfBuffer = Buffer.from(pdfWithAudit);
 
+        const p12Buffer = getP12CertificateBuffer();
         const p12Signature = new P12Signer(p12Buffer, { passphrase: 'password' });
         const placeholderResult = plainAddPlaceholder({
             pdfBuffer: pdfBuffer,
