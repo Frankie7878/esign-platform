@@ -628,4 +628,15 @@ async function finalizeEnvelope(id, env) {
     }
 }
 
-app.listen(PORT, () => console.log(`🚀 Server running at http://localhost:${PORT}`));
+if (process.argv[1] && process.argv[1].includes('server.mjs')) {
+    app.listen(PORT, () => console.log(`🚀 Server running at http://localhost:${PORT}`));
+}
+
+export default {
+    async fetch(request, env, ctx) {
+        return new Response("🚀 E-Sign Platform Cloudflare Worker Online", {
+            status: 200,
+            headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+        });
+    }
+};
