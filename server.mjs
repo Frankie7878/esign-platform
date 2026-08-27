@@ -133,7 +133,8 @@ function generateIdentity() {
     const p12Asn1 = forge.pkcs12.toPkcs12Asn1(keys.privateKey, cert, 'password', { algorithm: '3des' });
     p12Buffer = Buffer.from(forge.asn1.toDer(p12Asn1).getBytes(), 'binary');
 }
-generateIdentity();
+const upload = multer({ dest: 'uploads/' });
+app.use(express.static('public'));
 
 // --- GITHUB OAUTH ENDPOINTS ---
 const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID || 'Ov23liTMskA0wVZzq2ee';
