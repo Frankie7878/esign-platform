@@ -587,6 +587,7 @@ async function finalizeEnvelope(id, env) {
             name: 'E-Sign Security Certification Authority',
             reason: 'Certified by E-Sign Platform Legal Trust Services',
             location: 'Toronto, ON, Canada',
+            signingTime: new Date(),
             signatureLength: 16000 
         });
         const signedPdf = await new SignPdf().sign(placeholderResult, p12Signature);
