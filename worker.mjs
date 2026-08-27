@@ -133,9 +133,50 @@ app.get('/api/auth/github/callback', async (c) => {
 // Health Check API
 app.get('/api/health', (c) => c.json({ status: 'ok', service: 'E-Sign Platform Worker', timestamp: new Date().toISOString() }));
 
-// Root Redirects
-app.get('/', (c) => c.redirect('/index.html'));
-app.get('/dashboard', (c) => c.redirect('/dashboard.html'));
+// Serve Fresh Uncached HTML Pages
+app.get('/', async (c) => {
+    if (c.env && c.env.ASSETS) {
+        const req = new Request(new URL('/index.html', c.req.url), c.req.raw);
+        const res = await c.env.ASSETS.fetch(req);
+        const headers = new Headers(res.headers);
+        headers.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+        return new Response(res.body, { status: res.status, headers });
+    }
+    return c.redirect('/index.html');
+});
+
+app.get('/index.html', async (c) => {
+    if (c.env && c.env.ASSETS) {
+        const req = new Request(new URL('/index.html', c.req.url), c.req.raw);
+        const res = await c.env.ASSETS.fetch(req);
+        const headers = new Headers(res.headers);
+        headers.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+        return new Response(res.body, { status: res.status, headers });
+    }
+    return c.notFound();
+});
+
+app.get('/dashboard', async (c) => {
+    if (c.env && c.env.ASSETS) {
+        const req = new Request(new URL('/dashboard.html', c.req.url), c.req.raw);
+        const res = await c.env.ASSETS.fetch(req);
+        const headers = new Headers(res.headers);
+        headers.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+        return new Response(res.body, { status: res.status, headers });
+    }
+    return c.redirect('/dashboard.html');
+});
+
+app.get('/dashboard.html', async (c) => {
+    if (c.env && c.env.ASSETS) {
+        const req = new Request(new URL('/dashboard.html', c.req.url), c.req.raw);
+        const res = await c.env.ASSETS.fetch(req);
+        const headers = new Headers(res.headers);
+        headers.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+        return new Response(res.body, { status: res.status, headers });
+    }
+    return c.notFound();
+});
 
 // API: Send Envelope (Upload PDFs & Create Chain)
 app.post('/api/send', async (c) => {
