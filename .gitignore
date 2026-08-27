@@ -1,5 +1,8 @@
 node_modules/
 uploads/
 database.json
+certificate.p12
+config.mjs
+.env
 .DS_Store
 *.log
