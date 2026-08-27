@@ -234,25 +234,27 @@
                         createGuideBox(wrapper, field, viewport.width, viewport.height);
                     });
 
-                    // Fallback: Allow clicking anywhere on canvas to place a signature/field
-                    wrapper.onclick = (e) => {
-                        if (e.target.classList.contains('assigned-guide-box') || e.target.closest('.assigned-guide-box')) return;
-                        const rect = wrapper.getBoundingClientRect();
-                        const clickX = e.clientX - rect.left;
-                        const clickY = e.clientY - rect.top;
+                    // Allow clicking canvas only if free placement mode (no pre-assigned fields exist)
+                    if (!assignedFields || assignedFields.length === 0) {
+                        wrapper.onclick = (e) => {
+                            if (e.target.classList.contains('assigned-guide-box') || e.target.closest('.assigned-guide-box')) return;
+                            const rect = wrapper.getBoundingClientRect();
+                            const clickX = e.clientX - rect.left;
+                            const clickY = e.clientY - rect.top;
 
-                        const newField = {
-                            type: 'signature',
-                            pageIndex: parseInt(wrapper.dataset.idx),
-                            xPercent: clickX / rect.width,
-                            yPercent: clickY / rect.height,
-                            wPercent: 0.16,
-                            hPercent: 0.04
+                            const newField = {
+                                type: 'signature',
+                                pageIndex: parseInt(wrapper.dataset.idx),
+                                xPercent: clickX / rect.width,
+                                yPercent: clickY / rect.height,
+                                wPercent: 0.16,
+                                hPercent: 0.04
+                            };
+
+                            const box = createGuideBox(wrapper, newField, rect.width, rect.height);
+                            handleGuideBoxClick(e, box);
                         };
-
-                        const box = createGuideBox(wrapper, newField, rect.width, rect.height);
-                        handleGuideBoxClick(e, box);
-                    };
+                    }
 
                     container.appendChild(wrapper);
                 } catch (pageErr) {
