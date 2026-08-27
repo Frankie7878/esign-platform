@@ -1,6 +1,10 @@
 import { Hono } from 'hono';
+import { serveStatic } from 'hono/cloudflare-workers';
 
 const app = new Hono();
+
+// Serve Static Assets (index.html, signer.html, dashboard.html, js/...)
+app.use('/*', serveStatic({ root: './' }));
 
 const GITHUB_CLIENT_ID = 'Ov23liTMskA0wVZzq2ee';
 const GITHUB_CLIENT_SECRET = '03bc8d55baa1b578e1ccc95787494b25e76c997d';
