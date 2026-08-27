@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=0.3, maximum-scale=3.0, user-scalable=yes">
+    <title>DocuSign-Style E-Sign Sender (Multi-PDF)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="/js/pdf.min.js"></script>
+    <script>pdfjsLib.GlobalWorkerOptions.workerSrc = '/js/pdf.worker.min.js';</script>
+    <style>
+        .designer-page { position: relative; margin-bottom: 24px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1); cursor: crosshair; }
+        .field-tag { 
+            position: absolute; cursor: move; border-width: 2px; border-style: solid;
+            background: rgba(255, 255, 255, 0.9); z-index: 10; user-select: none;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            border-radius: 6px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+        }
+        .btn-tag-delete {
+            position: absolute; top: -8px; right: -8px;
+            background: #ef4444; color: white; border-radius: 50%; width: 20px; height: 20px;
+            font-size: 12px; font-weight: bold; line-height: 18px; text-align: center;
+            cursor: pointer; display: none; z-index: 20;
+        }
+        .field-tag:hover .btn-tag-delete { display: block; }
+        .tag-resize-handle {
+            position: absolute; bottom: -4px; right: -4px;
+            width: 12px; height: 12px; background: #3b82f6;
+            cursor: se-resize; display: none; z-index: 20; border-radius: 2px;
+        }
+        .field-tag:hover .tag-resize-handle { display: block; }
+        .selected-tool { ring: 2px; ring-color: #2563eb; transform: scale(1.02); }
+    </style>
+</head>
+<body class="bg-slate-100 min-h-screen text-slate-800">
+
+    <!-- Top Navigation Header -->
+    <header class="bg-white shadow-sm border-b border-slate-200 sticky top-0 z-40">
+        <div class="max-w-4xl mx-auto px-6 py-3 flex justify-between items-center">
+            <div class="flex items-center gap-2 font-bold text-slate-900 text-base">
+                <span>✍️ E-Sign Desk</span>
+            </div>
+            <div class="flex items-center gap-3" id="ghUserHeaderArea">
+                <a href="/api/auth/github" id="btnGithubAuth" class="bg-slate-900 hover:bg-black text-white text-xs font-bold px-3.5 py-1.5 rounded-lg transition flex items-center gap-2 shadow">
+                    <svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+                    <span>Continue with GitHub</span>
+                </a>
+                <a href="/dashboard" class="bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-bold px-3.5 py-1.5 rounded-lg transition flex items-center gap-1.5">
+                    <span>📊 Dashboard ➔</span>
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <!-- STEP 1: SETUP ENVELOPE -->
+    <div id="stepSetup" class="max-w-3xl mx-auto py-10 px-4">
+        <div class="bg-white rounded-2xl shadow-xl p-8 border border-slate-200">
+            <div class="flex items-center gap-3 mb-6">
+                <span class="text-3xl">🚀</span>
+                <div>
+                    <h1 class="text-2xl font-bold text-slate-900">Prepare New Envelope</h1>
+                    <p class="text-sm text-slate-500">Upload multiple PDF documents and specify signers</p>
+                </div>
+            </div>
+
+            <!-- Multi-PDF Upload -->
+            <div class="mb-6 bg-slate-50 p-5 rounded-xl border border-slate-200">
+                <div class="flex justify-between items-center mb-2">
+                    <label class="block text-xs font-bold uppercase text-slate-600">1. Upload Documents (Multiple PDFs Supported)</label>
+                    <span id="pdfCountBadge" class="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">0 PDFs selected</span>
+                </div>
+                <input type="file" id="pdfFile" accept="application/pdf" multiple onchange="handleFileSelection(event)" class="w-full text-sm text-slate-500 file:py-2.5 file:px-4 file:rounded-full file:border-0 file:bg-blue-600 file:text-white file:font-semibold hover:file:bg-blue-700 cursor-pointer">
+                
+                <!-- PDF Files List Container -->
+                <div id="pdfFileList" class="mt-4 space-y-2"></div>
+            </div>
+
+            <!-- Sender Info -->
+            <div class="mb-6 bg-slate-50 p-5 rounded-xl border border-slate-200">
+                <label class="block text-xs font-bold uppercase text-slate-600 mb-2">2. Sender (You)</label>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+                    <input type="text" id="senderName" value="Fan Zhang" placeholder="Sender Name" class="border border-slate-300 p-2.5 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500">
+                    <input type="email" id="senderEmail" value="fzhang618@gmail.com" placeholder="Sender Email" class="border border-slate-300 p-2.5 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <label class="flex items-center gap-2 cursor-pointer text-sm text-slate-700">
+                    <input type="checkbox" id="includeSender" checked class="w-4 h-4 text-blue-600 rounded">
+                    <span>I also need to sign this document (as the final recipient)</span>
+                </label>
+            </div>
+
+            <!-- Recipients List -->
+            <div class="mb-6 bg-slate-50 p-5 rounded-xl border border-slate-200">
+                <div class="flex justify-between items-center mb-3">
+                    <label class="block text-xs font-bold uppercase text-slate-600">3. Recipients / Signers (In order)</label>
+                    <button onclick="addClient()" class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg font-bold transition">+ Add Signer</button>
+                </div>
+                <div id="clients" class="space-y-3"></div>
+            </div>
+
+            <button onclick="goToDesigner()" class="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-lg transition text-base">Next: Place Fields for Signers ➔</button>
+        </div>
+    </div>
+
+    <!-- STEP 2: INTERACTIVE FIELD DESIGNER -->
+    <div id="stepDesigner" class="hidden">
+        <!-- Top Toolbar -->
+        <div class="fixed top-0 left-0 w-full bg-white shadow-md z-50 px-6 py-3 flex flex-wrap justify-between items-center gap-4">
+            <div class="flex items-center gap-3">
+                <button onclick="backToSetup()" class="text-slate-500 hover:text-slate-800 text-sm font-semibold">← Back</button>
+                <h2 class="text-lg font-bold text-slate-900 border-l pl-3 border-slate-300">Assign Fields on PDF Package</h2>
+            </div>
+
+            <div class="flex items-center gap-3">
+                <!-- Recipient Selector -->
+                <div class="flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-lg border border-slate-200">
+                    <label class="text-xs font-bold text-slate-500">Recipient:</label>
+                    <select id="recipientSelect" onchange="onRecipientChange()" class="bg-transparent text-sm font-bold text-slate-800 outline-none cursor-pointer">
+                    </select>
+                </div>
+
+                <div class="h-6 w-px bg-slate-300"></div>
+
+                <!-- Tools -->
+                <button id="toolSign" onclick="selectTool('signature')" class="tool-btn bg-blue-50 text-blue-700 border border-blue-200 px-3 py-1.5 rounded-lg text-sm font-bold hover:bg-blue-100 transition">🖊️ Signature</button>
+                <button id="toolInitial" onclick="selectTool('initial')" class="tool-btn bg-purple-50 text-purple-700 border border-purple-200 px-3 py-1.5 rounded-lg text-sm font-bold hover:bg-purple-100 transition">🔤 Initials</button>
+                <button id="toolName" onclick="selectTool('name')" class="tool-btn bg-indigo-50 text-indigo-700 border border-indigo-200 px-3 py-1.5 rounded-lg text-sm font-bold hover:bg-indigo-100 transition">👤 Print Name</button>
+                <button id="toolDate" onclick="selectTool('date')" class="tool-btn bg-emerald-50 text-emerald-700 border border-emerald-200 px-3 py-1.5 rounded-lg text-sm font-bold hover:bg-emerald-100 transition">📅 Date</button>
+                <button id="toolText" onclick="selectTool('text')" class="tool-btn bg-slate-100 text-slate-700 border border-slate-300 px-3 py-1.5 rounded-lg text-sm font-bold hover:bg-slate-200 transition">T Text</button>
+
+                <div class="h-6 w-px bg-slate-300 mx-1"></div>
+
+                <button id="sendBtn" onclick="sendEnvelope()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2 rounded-lg font-bold shadow transition">🚀 Send Envelope</button>
+            </div>
+        </div>
+
+        <!-- PDF Designer Canvas Container -->
+        <div id="designerContainer" class="mt-20 py-10 flex flex-col items-center"></div>
+    </div>
+
+    <script>
+        const RECIPIENT_COLORS = [
+            { border: '#2563eb', bg: '#dbeafe', text: '#1e40af', badge: '🔵' }, // Blue
+            { border: '#9333ea', bg: '#f3e8ff', text: '#6b21a8', badge: '🟣' }, // Purple
+            { border: '#d97706', bg: '#fef3c7', text: '#92400e', badge: '🟠' }, // Amber
+            { border: '#059669', bg: '#d1fae5', text: '#065f46', badge: '🟢' }, // Emerald
+            { border: '#dc2626', bg: '#fee2e2', text: '#991b1b', badge: '🔴' }  // Red
+        ];
+
+        let selectedPdfFiles = [];
+        let pdfDocs = [];
+        let recipientsList = [];
+        let activeTool = 'signature';
+        let currentRecipientIdx = 0;
+
+        function handleFileSelection(e) {
+            const files = Array.from(e.target.files);
+            files.forEach(f => {
+                if (f.type === 'application/pdf' && !selectedPdfFiles.some(existing => existing.name === f.name && existing.size === f.size)) {
+                    selectedPdfFiles.push(f);
+                }
+            });
+            renderFileList();
+        }
+
+        function removePdfFile(idx) {
+            selectedPdfFiles.splice(idx, 1);
+            renderFileList();
+        }
+
+        function renderFileList() {
+            const list = document.getElementById('pdfFileList');
+            const badge = document.getElementById('pdfCountBadge');
+            badge.innerText = `${selectedPdfFiles.length} PDF(s) selected`;
+            list.innerHTML = '';
+
+            selectedPdfFiles.forEach((file, idx) => {
+                const sizeMb = (file.size / (1024 * 1024)).toFixed(2);
+                const item = document.createElement('div');
+                item.className = 'flex justify-between items-center bg-white p-3 rounded-lg border border-slate-200 text-sm shadow-sm';
+                item.innerHTML = `
+                    <div class="flex items-center gap-3 overflow-hidden">
+                        <span class="text-lg">📄</span>
+                        <div class="truncate">
+                            <p class="font-bold text-slate-800 truncate">${file.name}</p>
+                            <p class="text-xs text-slate-400">${sizeMb} MB</p>
+                        </div>
+                    </div>
+                    <button onclick="removePdfFile(${idx})" class="text-slate-400 hover:text-red-500 font-bold px-2 py-1">✕</button>
+                `;
+                list.appendChild(item);
+            });
+        }
+
+        function addClient(defaultName = '', defaultEmail = '') {
+            const div = document.createElement('div');
+            div.className = 'client-row flex gap-2 items-center';
+            div.innerHTML = `
+                <input type="text" class="c-name border border-slate-300 p-2 rounded-lg text-sm flex-1" placeholder="Signer Name" value="${defaultName}">
+                <input type="email" class="c-email border border-slate-300 p-2 rounded-lg text-sm flex-1" placeholder="Signer Email" value="${defaultEmail}">
+                <button onclick="this.parentElement.remove()" class="text-red-500 font-bold px-2 py-1 hover:bg-red-50 rounded">✕</button>
+            `;
+            document.getElementById('clients').appendChild(div);
+        }
+
+        // Add default signer
+        addClient('Lin Chen', 'yangmiaojuan88@gmail.com');
+
+        async function goToDesigner() {
+            if (selectedPdfFiles.length === 0) return alert("Please select at least one PDF document first!");
+
+            // Build recipients list
+            recipientsList = [];
+            document.querySelectorAll('.client-row').forEach(row => {
+                const name = row.querySelector('.c-name').value.trim();
+                const email = row.querySelector('.c-email').value.trim();
+                if (name && email) {
+                    recipientsList.push({ name, email, role: 'Client' });
+                }
+            });
+
+            const senderName = document.getElementById('senderName').value.trim();
+            const senderEmail = document.getElementById('senderEmail').value.trim();
+            const includeSender = document.getElementById('includeSender').checked;
+            if (includeSender && senderName && senderEmail) {
+                recipientsList.push({ name: senderName, email: senderEmail, role: 'Sender' });
+            }
+
+            if (recipientsList.length === 0) return alert("Please specify at least one recipient!");
+
+            // Populate Recipient Selector
+            const select = document.getElementById('recipientSelect');
+            select.innerHTML = '';
+            recipientsList.forEach((r, idx) => {
+                const color = RECIPIENT_COLORS[idx % RECIPIENT_COLORS.length];
+                const opt = document.createElement('option');
+                opt.value = idx;
+                opt.innerText = `${color.badge} ${r.name} (${r.role})`;
+                select.appendChild(opt);
+            });
+            currentRecipientIdx = 0;
+
+            // Load & Render PDFs in sequence
+            pdfDocs = [];
+            for (const file of selectedPdfFiles) {
+                const arrayBuffer = await file.arrayBuffer();
+                const loadingTask = pdfjsLib.getDocument({
+                    data: new Uint8Array(arrayBuffer),
+                    password: '',
+                    stopAtErrors: false
+                });
+                loadingTask.onPassword = (updatePassword) => {
+                    if (typeof updatePassword === 'function') {
+                        try { updatePassword(""); } catch(e){}
+                    }
+                };
+                const doc = await loadingTask.promise;
+                pdfDocs.push({ doc, name: file.name });
+            }
+
+            document.getElementById('stepSetup').classList.add('hidden');
+            document.getElementById('stepDesigner').classList.remove('hidden');
+
+            renderDesignerPages();
+            selectTool('signature');
+        }
+
+        function backToSetup() {
+            document.getElementById('stepDesigner').classList.add('hidden');
+            document.getElementById('stepSetup').classList.remove('hidden');
+        }
+
+        async function renderDesignerPages() {
+            const container = document.getElementById('designerContainer');
+            container.innerHTML = '';
+
+            let globalPageIndex = 0;
+            const maxScreenWidth = Math.min(window.innerWidth - 24, 850);
+
+            for (const pdfObj of pdfDocs) {
+                const pdf = pdfObj.doc;
+                const firstPage = await pdf.getPage(1);
+                const unscaledViewport = firstPage.getViewport({ scale: 1.0 });
+                const renderScale = Math.min(1.5, Math.max(0.5, maxScreenWidth / unscaledViewport.width));
+
+                for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+                    const wrapper = document.createElement('div');
+                    wrapper.className = 'designer-page bg-white shadow-lg';
+                    wrapper.dataset.idx = globalPageIndex;
+                    
+                    const page = await pdf.getPage(pageNum);
+                    const viewport = page.getViewport({ scale: renderScale });
+                    const canvas = document.createElement('canvas');
+                    canvas.width = viewport.width; canvas.height = viewport.height;
+                    wrapper.style.width = viewport.width + 'px'; wrapper.style.height = viewport.height + 'px';
+                    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+                    
+                    wrapper.appendChild(canvas);
+                    wrapper.addEventListener('click', (e) => handleDesignerClick(e, wrapper));
+                    container.appendChild(wrapper);
+
+                    globalPageIndex++;
+                }
+            }
+        }
+
+        function selectTool(tool) {
+            activeTool = tool;
+            document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('ring-2', 'ring-blue-600', 'border-blue-600'));
+            const btnMap = { 'signature': 'toolSign', 'initial': 'toolInitial', 'name': 'toolName', 'date': 'toolDate', 'text': 'toolText' };
+            const btn = document.getElementById(btnMap[tool]);
+            if (btn) btn.classList.add('ring-2', 'ring-blue-600', 'border-blue-600');
+        }
+
+        function onRecipientChange() {
+            currentRecipientIdx = parseInt(document.getElementById('recipientSelect').value);
+        }
+
+        function handleDesignerClick(e, wrapper) {
+            if (e.target.closest('.field-tag')) return;
+            const rect = wrapper.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            const recipient = recipientsList[currentRecipientIdx];
+            const color = RECIPIENT_COLORS[currentRecipientIdx % RECIPIENT_COLORS.length];
+            
+            let w = 150, h = 50;
+            if (activeTool === 'initial') { w = 90; h = 40; }
+            else if (activeTool === 'name') { w = 140; h = 32; }
+            else if (activeTool === 'date') { w = 140; h = 32; }
+            else if (activeTool === 'text') { w = 140; h = 32; }
+
+            createFieldTag(wrapper, x, y, w, h, activeTool, currentRecipientIdx, recipient.name, color);
+        }
+
+        function createFieldTag(wrapper, x, y, w, h, toolType, rIdx, rName, color) {
+            const el = document.createElement('div');
+            el.className = 'field-tag';
+            el.style.left = x + 'px'; el.style.top = y + 'px';
+            el.style.width = w + 'px'; el.style.height = h + 'px';
+            el.style.borderColor = color.border;
+            el.style.backgroundColor = color.bg;
+            el.dataset.type = toolType;
+            el.dataset.recipientIdx = rIdx;
+
+            const label = document.createElement('div');
+            label.style.color = color.text;
+            label.style.fontSize = '11px';
+            label.style.fontWeight = '700';
+            label.style.textAlign = 'center';
+            label.style.lineHeight = '1.2';
+            
+            const toolTitles = { 'signature': 'Signature', 'initial': 'Initials', 'name': 'Print Name', 'date': 'Date', 'text': 'Text' };
+            label.innerHTML = `<div>${toolTitles[toolType]}</div><div style="font-size: 9px; opacity: 0.85;">(${rName})</div>`;
+            el.appendChild(label);
+
+            const btnDel = document.createElement('div');
+            btnDel.className = 'btn-tag-delete'; btnDel.innerText = '×';
+            btnDel.onclick = (e) => { e.stopPropagation(); el.remove(); };
+            el.appendChild(btnDel);
+
+            const resize = document.createElement('div');
+            resize.className = 'tag-resize-handle';
+            resize.style.backgroundColor = color.border;
+            el.appendChild(resize);
+
+            makeTagDraggableAndResizable(el, resize);
+            wrapper.appendChild(el);
+        }
+
+        function makeTagDraggableAndResizable(el, handle) {
+            let isDragging = false, isResizing = false;
+            let startX, startY, startW, startH, startL, startT;
+
+            el.addEventListener('mousedown', (e) => {
+                if (e.target === handle || e.target.className === 'btn-tag-delete') return;
+                isDragging = true;
+                startX = e.clientX; startY = e.clientY;
+                startL = el.offsetLeft; startT = el.offsetTop;
+                e.stopPropagation();
+                window.addEventListener('mousemove', onDrag);
+                window.addEventListener('mouseup', stopAll);
+            });
+
+            handle.addEventListener('mousedown', (e) => {
+                isResizing = true;
+                startX = e.clientX; startY = e.clientY;
+                startW = el.offsetWidth; startH = el.offsetHeight;
+                e.stopPropagation();
+                window.addEventListener('mousemove', onResize);
+                window.addEventListener('mouseup', stopAll);
+            });
+
+            function onDrag(e) {
+                if (!isDragging) return;
+                el.style.left = (startL + e.clientX - startX) + 'px';
+                el.style.top = (startT + e.clientY - startY) + 'px';
+            }
+            function onResize(e) {
+                if (!isResizing) return;
+                el.style.width = Math.max(60, startW + e.clientX - startX) + 'px';
+                el.style.height = Math.max(24, startH + e.clientY - startY) + 'px';
+            }
+            function stopAll() { 
+                isDragging = false; isResizing = false; 
+                window.removeEventListener('mousemove', onDrag); 
+                window.removeEventListener('mousemove', onResize); 
+            }
+        }
+
+        async function sendEnvelope() {
+            const assignedFields = [];
+            document.querySelectorAll('.field-tag').forEach(el => {
+                const wrapper = el.parentElement;
+                const wrapperW = wrapper.offsetWidth;
+                const wrapperH = wrapper.offsetHeight;
+                
+                assignedFields.push({
+                    pageIndex: parseInt(wrapper.dataset.idx),
+                    recipientIndex: parseInt(el.dataset.recipientIdx),
+                    type: el.dataset.type,
+                    xPercent: el.offsetLeft / wrapperW,
+                    yPercent: el.offsetTop / wrapperH,
+                    wPercent: el.offsetWidth / wrapperW,
+                    hPercent: el.offsetHeight / wrapperH
+                });
+            });
+
+            if (assignedFields.length === 0) return alert("Please place at least one field tag on the PDF before sending!");
+
+            const sendBtn = document.getElementById('sendBtn');
+            sendBtn.innerText = "Sending Package..."; sendBtn.disabled = true;
+
+            const formData = new FormData();
+            selectedPdfFiles.forEach(file => {
+                formData.append('pdf', file);
+            });
+
+            formData.append('senderName', document.getElementById('senderName').value);
+            formData.append('senderEmail', document.getElementById('senderEmail').value);
+            formData.append('includeSender', document.getElementById('includeSender').checked);
+            formData.append('clients', JSON.stringify(recipientsList.filter(r => r.role === 'Client')));
+            formData.append('assignedFields', JSON.stringify(assignedFields));
+
+            try {
+                const res = await fetch('/api/send', { method: 'POST', body: formData });
+                const data = await res.json();
+                if (data.success) {
+                    alert("🚀 Envelope Package Sent Successfully!\nEnvelope ID: " + data.envelopeId);
+                    window.location.reload();
+                } else {
+                    alert("Error: " + (data.error || "Failed to send envelope"));
+                }
+            } catch (e) {
+                alert("Network Error: " + e.message);
+            } finally {
+                sendBtn.innerText = "🚀 Send Envelope Package"; sendBtn.disabled = false;
+            }
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.has('github_user')) {
+                try {
+                    const ghUser = JSON.parse(decodeURIComponent(urlParams.get('github_user')));
+                    localStorage.setItem('github_user', JSON.stringify(ghUser));
+                    window.history.replaceState({}, document.title, window.location.pathname);
+                } catch(e){}
+            }
+
+            const storedGh = localStorage.getItem('github_user');
+            if (storedGh) {
+                try {
+                    const u = JSON.parse(storedGh);
+                    const headerArea = document.getElementById('ghUserHeaderArea');
+                    if (headerArea) {
+                        headerArea.innerHTML = `
+                            <div class="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1 rounded-full text-xs shadow-sm">
+                                <img src="${u.avatar_url}" class="w-5 h-5 rounded-full">
+                                <span class="font-bold text-slate-800">${u.name}</span>
+                                <button onclick="logoutGithub()" class="text-slate-400 hover:text-red-500 font-bold ml-1" title="Sign out">×</button>
+                            </div>
+                            <a href="/dashboard" class="bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-bold px-3.5 py-1.5 rounded-lg transition">📊 Dashboard ➔</a>
+                        `;
+                    }
+                    if (document.getElementById('senderName') && !document.getElementById('senderName').value) {
+                        document.getElementById('senderName').value = u.name;
+                    }
+                    if (document.getElementById('senderEmail') && !document.getElementById('senderEmail').value) {
+                        document.getElementById('senderEmail').value = u.email;
+                    }
+                } catch(e){}
+            }
+        });
+
+        function logoutGithub() {
+            localStorage.removeItem('github_user');
+            window.location.reload();
+        }
+    </script>
+</body>
+</html>

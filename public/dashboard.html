@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>E-Sign Platform - Envelope Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 min-h-screen text-slate-800 pb-20">
+
+    <!-- Top Navigation Header -->
+    <header class="bg-white shadow-md border-b border-slate-200 sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
+            <div class="flex items-center gap-3">
+                <span class="text-3xl">✍️</span>
+                <div>
+                    <h1 class="text-xl font-bold text-slate-900 leading-tight">E-Sign Management Dashboard</h1>
+                    <p class="text-xs text-slate-500 font-medium">Track envelope statuses, recipient timelines & download signed documents</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-3" id="dashGhHeader">
+                <a href="/api/auth/github" id="btnDashGithub" class="bg-slate-900 hover:bg-black text-white text-xs font-bold px-3.5 py-2 rounded-lg transition flex items-center gap-2 shadow">
+                    <svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+                    <span>Continue with GitHub</span>
+                </a>
+                <a href="/" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3.5 py-2 rounded-lg shadow transition flex items-center gap-1.5">
+                    <span>➕ New Envelope</span>
+                </a>
+                <button onclick="loadEnvelopes()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3 py-2 rounded-lg transition">
+                    🔄 Refresh
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content Container -->
+    <main class="max-w-7xl mx-auto px-6 mt-8">
+
+        <!-- Stats Overview Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-4">
+                <div class="w-12 h-12 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center text-2xl font-bold">📑</div>
+                <div>
+                    <p class="text-xs font-bold text-slate-400 uppercase tracking-wider">Total Envelopes</p>
+                    <h3 id="statTotal" class="text-2xl font-black text-slate-900 mt-0.5">0</h3>
+                </div>
+            </div>
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-4">
+                <div class="w-12 h-12 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center text-2xl font-bold">⏳</div>
+                <div>
+                    <p class="text-xs font-bold text-slate-400 uppercase tracking-wider">In Progress</p>
+                    <h3 id="statInProgress" class="text-2xl font-black text-amber-600 mt-0.5">0</h3>
+                </div>
+            </div>
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-4">
+                <div class="w-12 h-12 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center text-2xl font-bold">✅</div>
+                <div>
+                    <p class="text-xs font-bold text-slate-400 uppercase tracking-wider">Completed</p>
+                    <h3 id="statCompleted" class="text-2xl font-black text-emerald-600 mt-0.5">0</h3>
+                </div>
+            </div>
+        </div>
+
+        <!-- Envelopes Table Container -->
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+            <div class="p-6 border-b border-slate-200 flex justify-between items-center bg-slate-50/50">
+                <h2 class="text-lg font-bold text-slate-900">Envelopes & Signing Progress</h2>
+                <input type="text" id="searchInput" onkeyup="filterEnvelopes()" placeholder="Search by ID, name, email or file..." class="border border-slate-300 rounded-lg px-3.5 py-1.5 text-sm w-72 focus:ring-2 focus:ring-blue-500 outline-none">
+            </div>
+
+            <div id="loadingSpinner" class="p-12 text-center text-slate-500 font-semibold">
+                <div class="animate-spin text-3xl mb-2">🔄</div>
+                Loading status database...
+            </div>
+
+            <div id="emptyState" class="hidden p-12 text-center text-slate-500">
+                <div class="text-5xl mb-3">📭</div>
+                <h3 class="text-lg font-bold text-slate-800 mb-1">No Envelopes Found</h3>
+                <p class="text-sm text-slate-500 mb-4">Create your first envelope to start sending documents for signature.</p>
+                <a href="/" class="inline-block bg-blue-600 text-white font-bold px-5 py-2 rounded-lg hover:bg-blue-700 text-sm shadow">Create Envelope</a>
+            </div>
+
+            <div class="overflow-x-auto">
+                <table id="envelopeTable" class="w-full text-left text-sm hidden">
+                    <thead class="bg-slate-100 text-slate-600 font-bold uppercase text-xs border-b border-slate-200">
+                        <tr>
+                            <th class="px-6 py-4">Envelope ID & Subject</th>
+                            <th class="px-6 py-4">Status</th>
+                            <th class="px-6 py-4">Signers Progress</th>
+                            <th class="px-6 py-4">Created At</th>
+                            <th class="px-6 py-4 text-right">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody" class="divide-y divide-slate-200"></tbody>
+                </table>
+            </div>
+        </div>
+
+    </main>
+
+    <script>
+        let allEnvelopes = [];
+
+        window.onload = () => {
+            loadEnvelopes();
+        };
+
+        async function loadEnvelopes() {
+            document.getElementById('loadingSpinner').classList.remove('hidden');
+            document.getElementById('envelopeTable').classList.add('hidden');
+            document.getElementById('emptyState').classList.add('hidden');
+
+            try {
+                const res = await fetch('/api/envelopes');
+                allEnvelopes = await res.json();
+                renderEnvelopes(allEnvelopes);
+            } catch (e) {
+                alert("Error loading envelope status data: " + e.message);
+            } finally {
+                document.getElementById('loadingSpinner').classList.add('hidden');
+            }
+        }
+
+        function renderEnvelopes(list) {
+            const tbody = document.getElementById('tableBody');
+            tbody.innerHTML = '';
+
+            let inProgressCount = 0;
+            let completedCount = 0;
+
+            if (list.length === 0) {
+                document.getElementById('emptyState').classList.remove('hidden');
+                return;
+            }
+
+            document.getElementById('envelopeTable').classList.remove('hidden');
+
+            list.forEach(env => {
+                const isCompleted = env.status === 'completed';
+                if (isCompleted) completedCount++;
+                else inProgressCount++;
+
+                const tr = document.createElement('tr');
+                tr.className = 'hover:bg-slate-50 transition';
+
+                // 1. ID & Subject
+                const tdId = document.createElement('td');
+                tdId.className = 'px-6 py-4 align-top';
+                tdId.innerHTML = `
+                    <div class="font-mono font-bold text-blue-600 text-base">#${env.id}</div>
+                    <div class="font-semibold text-slate-900 mt-0.5">${escapeHtml(env.originalName || 'Document Package')}</div>
+                    <div class="text-xs text-slate-500 mt-1">${escapeHtml(env.emailSubject || '')}</div>
+                `;
+
+                // 2. Status Badge
+                const tdStatus = document.createElement('td');
+                tdStatus.className = 'px-6 py-4 align-top';
+                if (isCompleted) {
+                    tdStatus.innerHTML = `
+                        <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800">
+                            <span class="w-2 h-2 rounded-full bg-emerald-500"></span> Completed
+                        </span>`;
+                } else {
+                    const currentIdx = env.currentRecipientIndex || 0;
+                    const total = (env.recipients || []).length;
+                    tdStatus.innerHTML = `
+                        <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-800">
+                            <span class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span> In Progress (${currentIdx}/${total})
+                        </span>`;
+                }
+
+                // 3. Signers Progress Timeline
+                const tdSigners = document.createElement('td');
+                tdSigners.className = 'px-6 py-4 align-top';
+                let signersHtml = '<div class="space-y-2">';
+                (env.recipients || []).forEach((r, idx) => {
+                    const isSigned = env.history && env.history.some(h => h.email === r.email || h.name === r.name);
+                    const isCurrentTurn = !isCompleted && idx === env.currentRecipientIndex;
+
+                    if (isSigned) {
+                        const historyItem = env.history.find(h => h.email === r.email || h.name === r.name);
+                        const signedTime = historyItem ? new Date(historyItem.date).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+                        signersHtml += `
+                            <div class="flex items-center gap-2 text-xs">
+                                <span class="text-emerald-600 font-bold">✅</span>
+                                <span class="font-bold text-slate-800">${escapeHtml(r.name)}</span>
+                                <span class="text-slate-400">(${escapeHtml(r.role)})</span>
+                                <span class="text-emerald-700 font-medium ml-auto bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">${signedTime}</span>
+                            </div>`;
+                    } else if (isCurrentTurn) {
+                        const signUrl = `${window.location.origin}/sign/${env.id}?idx=${idx}`;
+                        signersHtml += `
+                            <div class="flex items-center gap-2 text-xs bg-amber-50 p-2 rounded-lg border border-amber-200">
+                                <span class="text-amber-600 font-bold animate-spin">⏳</span>
+                                <span class="font-bold text-amber-900">${escapeHtml(r.name)} (Current Turn)</span>
+                                <span class="text-amber-700">(${escapeHtml(r.role)})</span>
+                                <button onclick="copyToClipboard('${signUrl}')" class="ml-auto text-[11px] bg-white border border-amber-300 hover:bg-amber-100 text-amber-900 font-bold px-2 py-0.5 rounded transition cursor-pointer">
+                                    📋 Copy Link
+                                </button>
+                            </div>`;
+                    } else {
+                        signersHtml += `
+                            <div class="flex items-center gap-2 text-xs text-slate-400 opacity-75">
+                                <span>💤</span>
+                                <span class="font-semibold">${escapeHtml(r.name)}</span>
+                                <span>(${escapeHtml(r.role)})</span>
+                                <span class="ml-auto text-[10px]">Queued</span>
+                            </div>`;
+                    }
+                });
+                signersHtml += '</div>';
+                tdSigners.innerHTML = signersHtml;
+
+                // 4. Created At
+                const tdDate = document.createElement('td');
+                tdDate.className = 'px-6 py-4 align-top text-xs text-slate-500 font-medium';
+                const createdDate = env.createdAt ? new Date(env.createdAt).toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'N/A';
+                tdDate.innerText = createdDate;
+
+                // 5. Actions
+                const tdActions = document.createElement('td');
+                tdActions.className = 'px-6 py-4 align-top text-right space-x-2';
+                
+                if (isCompleted) {
+                    tdActions.innerHTML = `
+                        <div class="flex items-center justify-end gap-1.5">
+                            <a href="/api/download/${env.id}" target="_blank" class="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow transition">
+                                <span>📥 Download PDF</span>
+                            </a>
+                            <button onclick="cancelEnvelope('${env.id}')" class="inline-flex items-center gap-1 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 font-bold px-2.5 py-1.5 rounded-lg text-xs transition cursor-pointer" title="Delete record">
+                                <span>🗑️</span>
+                            </button>
+                        </div>`;
+                } else {
+                    tdActions.innerHTML = `
+                        <div class="flex items-center justify-end gap-1.5">
+                            <button onclick="resendEmail('${env.id}')" class="inline-flex items-center gap-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold px-3 py-1.5 rounded-lg text-xs transition cursor-pointer">
+                                <span>📧 Resend</span>
+                            </button>
+                            <button onclick="cancelEnvelope('${env.id}')" class="inline-flex items-center gap-1 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 font-bold px-3 py-1.5 rounded-lg text-xs transition cursor-pointer" title="Cancel/Void Envelope">
+                                <span>🗑️ Cancel</span>
+                            </button>
+                        </div>`;
+                }
+
+                tr.appendChild(tdId);
+                tr.appendChild(tdStatus);
+                tr.appendChild(tdSigners);
+                tr.appendChild(tdDate);
+                tr.appendChild(tdActions);
+
+                tbody.appendChild(tr);
+            });
+
+            document.getElementById('statTotal').innerText = list.length;
+            document.getElementById('statInProgress').innerText = inProgressCount;
+            document.getElementById('statCompleted').innerText = completedCount;
+        }
+
+        async function cancelEnvelope(id) {
+            if (!confirm(`Are you sure you want to CANCEL and DELETE Envelope #${id}?\n\nThis will void all signing links for recipients.`)) return;
+            try {
+                const res = await fetch(`/api/cancel/${id}`, { method: 'POST' });
+                const data = await res.json();
+                if (data.success) {
+                    alert(`✅ Envelope #${id} has been cancelled.`);
+                    loadEnvelopes();
+                } else {
+                    alert("Error: " + data.error);
+                }
+            } catch (e) {
+                alert("Network Error");
+            }
+        }
+
+        async function resendEmail(id) {
+            if (!confirm(`Resend notification email to current signer for Envelope #${id}?`)) return;
+            try {
+                const res = await fetch(`/api/resend/${id}`, { method: 'POST' });
+                const data = await res.json();
+                if (data.success) {
+                    alert(`✅ Notification email resent to ${data.sentTo}!`);
+                } else {
+                    alert("Error: " + data.error);
+                }
+            } catch (e) {
+                alert("Network Error");
+            }
+        }
+
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text);
+            alert("📋 Signing link copied to clipboard!\n\n" + text);
+        }
+
+        function filterEnvelopes() {
+            const query = document.getElementById('searchInput').value.toLowerCase();
+            const filtered = allEnvelopes.filter(env => {
+                const text = JSON.stringify(env).toLowerCase();
+                return text.includes(query);
+            });
+            renderEnvelopes(filtered);
+        }
+
+        function escapeHtml(str) {
+            return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.has('github_user')) {
+                try {
+                    const ghUser = JSON.parse(decodeURIComponent(urlParams.get('github_user')));
+                    localStorage.setItem('github_user', JSON.stringify(ghUser));
+                    window.history.replaceState({}, document.title, window.location.pathname);
+                } catch(e){}
+            }
+
+            const storedGh = localStorage.getItem('github_user');
+            if (storedGh) {
+                try {
+                    const u = JSON.parse(storedGh);
+                    const headerArea = document.getElementById('dashGhHeader');
+                    if (headerArea) {
+                        headerArea.innerHTML = `
+                            <div class="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1 rounded-full text-xs shadow-sm">
+                                <img src="${u.avatar_url}" class="w-5 h-5 rounded-full">
+                                <span class="font-bold text-slate-800">${u.name}</span>
+                                <button onclick="logoutGithub()" class="text-slate-400 hover:text-red-500 font-bold ml-1" title="Sign out">×</button>
+                            </div>
+                            <a href="/" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3.5 py-2 rounded-lg shadow transition flex items-center gap-1.5">
+                                <span>➕ New Envelope</span>
+                            </a>
+                            <button onclick="loadEnvelopes()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3 py-2 rounded-lg transition">
+                                🔄 Refresh
+                            </button>
+                        `;
+                    }
+                } catch(e){}
+            }
+        });
+
+        function logoutGithub() {
+            localStorage.removeItem('github_user');
+            window.location.reload();
+        }
+    </script>
+</body>
+</html>

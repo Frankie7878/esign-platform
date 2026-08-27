@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=0.3, maximum-scale=3.0, user-scalable=yes">
+    <title>DocuSign-Style Guided Signing Desk</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="/js/pdf.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Great+Vibes&display=swap" rel="stylesheet">
+    <script>pdfjsLib.GlobalWorkerOptions.workerSrc = '/js/pdf.worker.min.js';</script>
+    <style>
+        .page-wrap { position: relative; margin-bottom: 24px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1); }
+        .assigned-guide-box {
+            position: absolute; cursor: pointer; border: 2px dashed #2563eb;
+            background: rgba(219, 234, 254, 0.85); color: #1e40af;
+            border-radius: 6px; z-index: 100; font-weight: 700; font-size: 13px;
+            display: flex; align-items: center; justify-content: center;
+            transition: all 0.2s ease; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+        }
+        .assigned-guide-box:hover {
+            border-color: #1d4ed8; background: rgba(191, 219, 254, 0.95);
+            transform: scale(1.02);
+        }
+        .assigned-guide-box.filled {
+            border-style: solid; border-color: #16a34a; background: rgba(240, 253, 244, 0.95);
+            color: #15803d;
+        }
+        .btn-delete-filled {
+            position: absolute; top: -8px; right: -8px;
+            background: #ef4444; color: white; border-radius: 50%; width: 20px; height: 20px;
+            font-size: 12px; font-weight: bold; line-height: 18px; text-align: center;
+            cursor: pointer; display: none; z-index: 110;
+        }
+        .assigned-guide-box.filled:hover .btn-delete-filled { display: block; }
+        @keyframes pulseGlow {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.4); }
+            50% { box-shadow: 0 0 0 8px rgba(37, 99, 235, 0); }
+        }
+        .pulse-box { animation: pulseGlow 2s infinite; }
+    </style>
+</head>
+<body class="bg-slate-100 min-h-screen text-slate-800 pb-20">
+
+    <!-- Top Header -->
+    <div class="fixed top-0 left-0 w-full bg-white shadow-md p-4 z-50 flex justify-between items-center px-6">
+        <div>
+            <h1 class="font-bold text-xl text-slate-900">✍️ Signing Desk</h1>
+            <p id="statusMsg" class="text-xs font-semibold text-slate-500">Loading document...</p>
+        </div>
+        <div class="flex items-center gap-3">
+            <span id="completionBadge" class="text-xs font-bold px-3 py-1.5 rounded-full bg-amber-100 text-amber-800">
+                0 / 0 fields filled
+            </span>
+            <!-- DocuSign-Style NEXT Arrow Guidance Button -->
+            <button id="nextGuidanceBtn" onclick="guideToNextField()" class="bg-amber-400 hover:bg-amber-500 text-amber-950 font-extrabold px-5 py-2.5 rounded-full shadow-lg border-2 border-amber-300 flex items-center gap-2 text-sm transition transform hover:scale-105 active:scale-95">
+                <span>🚀 START</span> ➔
+            </button>
+            <button onclick="finish()" id="finishBtn" disabled class="bg-slate-400 text-white px-6 py-2 rounded-lg font-bold shadow cursor-not-allowed transition">Finish</button>
+        </div>
+    </div>
+
+    <!-- Document Loading Indicator -->
+    <div id="pdfLoadingIndicator" class="mt-24 flex flex-col items-center justify-center py-20">
+        <div class="animate-spin text-4xl mb-3">🌀</div>
+        <div class="text-slate-700 font-bold text-base">Loading document pages...</div>
+        <div class="text-slate-400 text-xs mt-1">Please wait a moment while document pages render</div>
+    </div>
+
+    <!-- PDF Pages Container (Horizontally Scrollable & Responsive) -->
+    <div class="w-full overflow-x-auto px-2 py-4 flex justify-center">
+        <div id="pdfContainer" class="flex flex-col items-center max-w-full"></div>
+    </div>
+
+    <!-- Floating DocuSign Arrow Guidance Widget -->
+    <div class="fixed bottom-6 right-6 z-40">
+        <button id="floatingNextBtn" onclick="guideToNextField()" class="bg-amber-400 hover:bg-amber-500 text-amber-950 font-black px-6 py-3.5 rounded-full shadow-2xl border-4 border-white flex items-center gap-3 text-base transition-all transform hover:scale-110 active:scale-95 cursor-pointer">
+            <span id="floatingNextText">🚀 START</span> ➔
+        </button>
+    </div>
+
+    <!-- Signature Modal -->
+    <div id="sigModal" class="fixed inset-0 bg-black/50 hidden z-50 flex items-center justify-center backdrop-blur-sm p-4">
+        <div class="bg-white p-6 rounded-xl w-[92%] max-w-md shadow-2xl">
+            <h3 class="text-lg font-bold mb-4" id="modalTitle">Create Signature</h3>
+            <div class="flex gap-4 border-b mb-4 text-sm font-bold">
+                <button onclick="switchTab('draw')" id="tabDraw" class="text-blue-600 border-b-2 border-blue-600 pb-1 cursor-pointer">🖊️ Draw</button>
+                <button onclick="switchTab('type')" id="tabType" class="text-slate-500 hover:text-slate-700 pb-1 cursor-pointer">⌨️ Type</button>
+                <button onclick="switchTab('upload')" id="tabUpload" class="text-slate-500 hover:text-slate-700 pb-1 cursor-pointer">📁 Upload</button>
+            </div>
+            <div id="drawArea">
+                <canvas id="pad" width="340" height="150" class="w-full border bg-gray-50 rounded-lg cursor-crosshair touch-none"></canvas>
+                <button onclick="clearPad()" class="text-xs text-red-500 mt-2 hover:underline cursor-pointer">Clear Canvas</button>
+            </div>
+            <div id="typeArea" class="hidden">
+                <input type="text" id="typeInput" class="w-full border p-3 rounded-lg text-3xl text-center focus:ring-2 focus:ring-blue-500 outline-none" style="font-family: 'Great Vibes', cursive;" placeholder="Type Name">
+            </div>
+            <div id="uploadArea" class="hidden">
+                <div id="uploadDropzone" onclick="document.getElementById('sigFileInput').click()" class="border-2 border-dashed border-blue-300 bg-blue-50/50 hover:bg-blue-50 p-6 rounded-xl text-center cursor-pointer transition">
+                    <div class="text-3xl mb-2">📸</div>
+                    <div class="text-xs font-bold text-slate-700">Click or Drag & Drop image here</div>
+                    <div class="text-[10px] text-slate-400 mt-1">Supports PNG, JPG, JPEG, WebP, SVG (Max 5MB)</div>
+                    <input type="file" id="sigFileInput" accept="image/*" class="hidden" onchange="handleSigFileUpload(event)">
+                </div>
+                <div id="uploadPreviewWrap" class="hidden mt-3 text-center">
+                    <div class="relative inline-block border rounded-lg p-2 bg-slate-50 max-h-[140px]">
+                        <img id="uploadPreviewImg" class="max-h-[120px] max-w-full object-contain mx-auto">
+                        <button onclick="resetSigUpload()" class="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 text-xs font-bold flex items-center justify-center hover:bg-red-600 shadow cursor-pointer">×</button>
+                    </div>
+                </div>
+            </div>
+            <div class="flex justify-end gap-2 mt-6">
+                <button onclick="closeModal()" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-bold text-sm cursor-pointer">Cancel</button>
+                <button onclick="applySignature()" class="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg shadow text-sm cursor-pointer">Apply</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const id = window.location.pathname.split('/').pop();
+        const urlParams = new URLSearchParams(window.location.search);
+        const signerIdx = urlParams.get('idx');
+
+        let pdfDoc = null;
+        let assignedFields = [];
+        let savedSignature = null;
+        let savedInitial = null;
+        let activeTargetBox = null;
+        let sigPad = { canvas: null, ctx: null, drawing: false };
+
+        window.onload = async () => {
+            const info = await (await fetch(`/api/envelope-info/${id}?idx=${signerIdx}`)).json();
+            if (info.error) {
+                let icon = "⏳";
+                let title = "Not Your Turn Yet";
+                let description = info.message || info.error;
+                let colorClass = "text-amber-600";
+
+                if (info.error === "already_signed") {
+                    icon = "✅";
+                    title = "Signing Already Completed";
+                    description = `Hello <b>${info.signerName || 'Signer'}</b>, you have already completed your required signing portion for this document package. It has passed to the next step.`;
+                    colorClass = "text-emerald-600";
+                } else if (info.error === "not_your_turn") {
+                    icon = "⏳";
+                    title = "Waiting for Previous Signer";
+                    description = `It is not your turn to sign yet. The document package is currently waiting for <b>${info.currentSignerName}</b> to sign. You will automatically receive an email notification as soon as it is your turn!`;
+                    colorClass = "text-amber-600";
+                }
+
+                return document.body.innerHTML = `
+                <div class="flex items-center justify-center min-h-screen bg-slate-50 p-6">
+                    <div class="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full text-center border border-slate-200">
+                        <div class="text-5xl mb-4">${icon}</div>
+                        <h2 class="text-2xl font-bold ${colorClass} mb-3">${title}</h2>
+                        <p class="text-slate-600 text-sm leading-relaxed mb-6">${description}</p>
+                        <div class="bg-slate-100 p-4 rounded-xl text-xs text-slate-500 font-medium">
+                            📩 You will be notified by email when the document package is fully signed and finalized.
+                        </div>
+                    </div>
+                </div>`;
+            }
+
+            document.getElementById('statusMsg').innerText = `Signing as: ${info.signerName}`;
+            window.signerName = info.signerName || "";
+            assignedFields = info.assignedFields || [];
+
+            try {
+                const pdfArrayBuffer = await (await fetch(`/api/envelope/${id}`)).arrayBuffer();
+                const loadingTask = pdfjsLib.getDocument({
+                    data: new Uint8Array(pdfArrayBuffer),
+                    password: '',
+                    stopAtErrors: false
+                });
+                loadingTask.onPassword = (updatePassword) => {
+                    if (typeof updatePassword === 'function') {
+                        try { updatePassword(""); } catch(e){}
+                    }
+                };
+                
+                pdfDoc = await Promise.race([
+                    loadingTask.promise,
+                    new Promise((_, reject) => setTimeout(() => reject(new Error("Document loading timed out. Please click reload to try again.")), 10000))
+                ]);
+                
+                await renderPages();
+                document.getElementById('pdfLoadingIndicator').style.display = 'none';
+                setupSigPad();
+                updateCompletionStatus();
+            } catch (pdfErr) {
+                console.error("PDF Load Error:", pdfErr);
+                const indicator = document.getElementById('pdfLoadingIndicator');
+                if (indicator) {
+                    indicator.style.display = 'block';
+                    indicator.innerHTML = `
+                        <div class="bg-red-50 border border-red-200 text-red-700 p-6 rounded-2xl text-center max-w-md shadow-lg my-10 mx-auto">
+                            <div class="text-4xl mb-2">⚠️</div>
+                            <div class="font-bold text-lg mb-1">Unable to Render Document</div>
+                            <div class="text-xs text-red-600 mb-4">${pdfErr.message || 'Please click reload to try again.'}</div>
+                            <button onclick="location.reload()" class="bg-red-600 hover:bg-red-700 text-white font-bold text-xs px-5 py-2.5 rounded-xl shadow transition cursor-pointer">🔄 Reload Document</button>
+                        </div>`;
+                }
+            }
+        };
+
+        async function renderPages() {
+            const container = document.getElementById('pdfContainer');
+            container.innerHTML = '';
+
+            // Calculate responsive render scale for Mobile / Tablet / Desktop
+            const maxScreenWidth = Math.min(window.innerWidth - 24, 850);
+            const firstPage = await pdfDoc.getPage(1);
+            const unscaledViewport = firstPage.getViewport({ scale: 1.0 });
+            const renderScale = Math.min(1.5, Math.max(0.5, maxScreenWidth / unscaledViewport.width));
+
+            for (let i = 1; i <= pdfDoc.numPages; i++) {
+                try {
+                    const wrapper = document.createElement('div');
+                    wrapper.className = 'page-wrap bg-white shadow-md rounded-lg overflow-hidden border border-slate-200';
+                    wrapper.dataset.idx = i - 1;
+                    
+                    const page = await pdfDoc.getPage(i);
+                    const viewport = page.getViewport({ scale: renderScale });
+                    const canvas = document.createElement('canvas');
+                    canvas.width = viewport.width; canvas.height = viewport.height;
+                    wrapper.style.width = viewport.width + 'px'; wrapper.style.height = viewport.height + 'px';
+                    
+                    const ctx = canvas.getContext('2d');
+                    await page.render({ canvasContext: ctx, viewport }).promise;
+                    wrapper.appendChild(canvas);
+
+                    // Render pre-assigned guide boxes for this page
+                    const pageFields = assignedFields.filter(f => f.pageIndex === (i - 1));
+                    pageFields.forEach((field, fIdx) => {
+                        createGuideBox(wrapper, field, viewport.width, viewport.height);
+                    });
+
+                    // Fallback: Allow clicking anywhere on canvas to place a signature/field
+                    wrapper.onclick = (e) => {
+                        if (e.target.classList.contains('assigned-guide-box') || e.target.closest('.assigned-guide-box')) return;
+                        const rect = wrapper.getBoundingClientRect();
+                        const clickX = e.clientX - rect.left;
+                        const clickY = e.clientY - rect.top;
+
+                        const newField = {
+                            type: 'signature',
+                            pageIndex: parseInt(wrapper.dataset.idx),
+                            xPercent: clickX / rect.width,
+                            yPercent: clickY / rect.height,
+                            wPercent: 0.16,
+                            hPercent: 0.04
+                        };
+
+                        const box = createGuideBox(wrapper, newField, rect.width, rect.height);
+                        handleGuideBoxClick(e, box);
+                    };
+
+                    container.appendChild(wrapper);
+                } catch (pageErr) {
+                    console.error(`Page ${i} render error:`, pageErr);
+                }
+            }
+        }
+
+        function createGuideBox(wrapper, field, pageW, pageH) {
+            const box = document.createElement('div');
+            box.className = 'assigned-guide-box pulse-box';
+            const left = pageW * parseFloat(field.xPercent);
+            const top = pageH * parseFloat(field.yPercent);
+            const width = pageW * parseFloat(field.wPercent);
+            const height = pageH * parseFloat(field.hPercent);
+
+            box.style.left = left + 'px';
+            box.style.top = top + 'px';
+            box.style.width = Math.max(width, 80) + 'px';
+            box.style.height = Math.max(height, 30) + 'px';
+
+            box.dataset.type = field.type;
+            box.dataset.pageIdx = field.pageIndex;
+            box.dataset.xPercent = field.xPercent;
+            box.dataset.yPercent = field.yPercent;
+            box.dataset.wPercent = field.wPercent;
+            box.dataset.hPercent = field.hPercent;
+
+            const toolLabels = {
+                'signature': '🖊️ Sign Here',
+                'initial': '🔤 Initial Here',
+                'name': '👤 Name Here',
+                'date': '📅 Date Here',
+                'text': '📝 Text Here'
+            };
+
+            box.innerText = toolLabels[field.type] || 'Sign Here';
+
+            box.onclick = (e) => handleGuideBoxClick(e, box);
+            wrapper.appendChild(box);
+            return box;
+        }
+
+        function handleGuideBoxClick(e, box) {
+            if (e && e.stopPropagation) e.stopPropagation();
+            if (box.classList.contains('filled')) return;
+            activeTargetBox = box;
+            const type = box.dataset.type;
+
+            if (type === 'signature') {
+                if (!savedSignature) openSigModal('signature');
+                else fillBoxWithImage(box, savedSignature, 'signature');
+            } else if (type === 'initial') {
+                if (!savedInitial) openSigModal('initial');
+                else fillBoxWithImage(box, savedInitial, 'initial');
+            } else if (type === 'name') {
+                const defaultName = window.signerName || "";
+                const val = prompt("Confirm / Enter Printed Legal Name:", defaultName);
+                if (val !== null && val.trim() !== "") {
+                    fillBoxWithText(box, val.trim());
+                }
+            } else if (type === 'date') {
+                const dateStr = new Date().toLocaleString([], {
+                    year: 'numeric', month: 'numeric', day: 'numeric',
+                    hour: '2-digit', minute: '2-digit'
+                });
+                fillBoxWithText(box, dateStr);
+            } else if (type === 'text') {
+                const val = prompt("Enter text for this field:", "");
+                if (val) fillBoxWithText(box, val);
+            }
+        }
+
+        function fillBoxWithImage(box, imgUrl, type) {
+            box.innerHTML = '';
+            box.classList.add('filled');
+            box.classList.remove('pulse-box');
+            box.dataset.val = imgUrl;
+
+            const img = document.createElement('img');
+            img.src = imgUrl;
+            img.style.width = '100%'; img.style.height = '100%'; img.style.objectFit = 'contain';
+            box.appendChild(img);
+
+            addDeleteBtn(box);
+            updateCompletionStatus();
+            setTimeout(() => guideToNextField(true), 300);
+        }
+
+        function fillBoxWithText(box, textVal) {
+            box.innerHTML = '';
+            box.classList.add('filled');
+            box.classList.remove('pulse-box');
+            box.dataset.val = textVal;
+
+            const span = document.createElement('span');
+            span.innerText = textVal;
+            span.style.fontSize = '12px'; span.style.fontWeight = '600';
+            box.appendChild(span);
+
+            addDeleteBtn(box);
+            updateCompletionStatus();
+            setTimeout(() => guideToNextField(true), 300);
+        }
+
+        function addDeleteBtn(box) {
+            const btn = document.createElement('div');
+            btn.className = 'btn-delete-filled';
+            btn.innerText = '×';
+            btn.onclick = (e) => {
+                e.stopPropagation();
+                box.classList.remove('filled');
+                box.classList.add('pulse-box');
+                delete box.dataset.val;
+                const toolLabels = {
+                    'signature': '🖊️ Sign Here', 'initial': '🔤 Initial Here',
+                    'name': '👤 Name Here', 'date': '📅 Date Here', 'text': '📝 Text Here'
+                };
+                box.innerText = toolLabels[box.dataset.type] || 'Sign Here';
+                updateCompletionStatus();
+            };
+            box.appendChild(btn);
+        }
+
+        function guideToNextField(auto = false) {
+            const totalBoxes = document.querySelectorAll('.assigned-guide-box').length;
+            const unfilledBoxes = Array.from(document.querySelectorAll('.assigned-guide-box:not(.filled)'));
+            const filledBoxes = document.querySelectorAll('.assigned-guide-box.filled').length;
+
+            if (unfilledBoxes.length === 0) {
+                if (totalBoxes > 0 && filledBoxes === totalBoxes) {
+                    if (!auto) finish();
+                } else if (!auto) {
+                    alert("No pre-assigned fields found for your account.");
+                }
+                return;
+            }
+
+            const targetBox = unfilledBoxes[0];
+            
+            // 1. Smoothly scroll target box into the center of the screen
+            targetBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+            // 2. Highlighting ring effect
+            targetBox.classList.add('ring-4', 'ring-amber-400', 'scale-105');
+            setTimeout(() => {
+                targetBox.classList.remove('ring-4', 'ring-amber-400', 'scale-105');
+            }, 1200);
+
+            // 3. Automatically trigger the field action after scrolling (if user clicked START/NEXT)
+            if (!auto) {
+                setTimeout(() => {
+                    handleGuideBoxClick(null, targetBox);
+                }, 350);
+            }
+        }
+
+        function updateCompletionStatus() {
+            const total = document.querySelectorAll('.assigned-guide-box').length;
+            const filled = document.querySelectorAll('.assigned-guide-box.filled').length;
+            const remaining = total - filled;
+
+            const badge = document.getElementById('completionBadge');
+            badge.innerText = `${filled} / ${total} fields filled`;
+
+            const nextBtn = document.getElementById('nextGuidanceBtn');
+            const floatBtn = document.getElementById('floatingNextBtn');
+            const floatText = document.getElementById('floatingNextText');
+            const finishBtn = document.getElementById('finishBtn');
+
+            if (total > 0 && remaining > 0) {
+                const label = filled === 0 ? '🚀 START' : `NEXT (${remaining} left)`;
+                nextBtn.innerHTML = `<span>${label}</span> ➔`;
+                nextBtn.className = 'bg-amber-400 hover:bg-amber-500 text-amber-950 font-extrabold px-5 py-2.5 rounded-full shadow-lg border-2 border-amber-300 flex items-center gap-2 text-sm transition transform hover:scale-105 active:scale-95 cursor-pointer';
+                
+                if (floatText && floatBtn) {
+                    floatText.innerText = label;
+                    floatBtn.className = 'bg-amber-400 hover:bg-amber-500 text-amber-950 font-black px-6 py-3.5 rounded-full shadow-2xl border-4 border-white flex items-center gap-3 text-base transition-all transform hover:scale-110 active:scale-95 cursor-pointer animate-pulse';
+                }
+            } else if (total > 0 && remaining === 0) {
+                nextBtn.innerHTML = `<span>✅ SUBMIT</span> ✔`;
+                nextBtn.className = 'bg-emerald-500 hover:bg-emerald-600 text-white font-extrabold px-5 py-2.5 rounded-full shadow-lg border-2 border-emerald-400 flex items-center gap-2 text-sm transition transform hover:scale-105 active:scale-95 cursor-pointer';
+                
+                if (floatText && floatBtn) {
+                    floatText.innerText = '✅ SUBMIT ENVELOPE';
+                    floatBtn.className = 'bg-emerald-500 hover:bg-emerald-600 text-white font-black px-6 py-3.5 rounded-full shadow-2xl border-4 border-white flex items-center gap-3 text-base transition-all transform hover:scale-110 active:scale-95 cursor-pointer animate-bounce';
+                }
+            } else if (total === 0) {
+                const label = filled === 0 ? '👆 Click Page to Sign' : '✅ SUBMIT';
+                nextBtn.innerHTML = `<span>${label}</span>`;
+                nextBtn.className = filled === 0 ? 'bg-blue-600 hover:bg-blue-700 text-white font-extrabold px-5 py-2.5 rounded-full shadow-lg text-sm transition cursor-pointer' : 'bg-emerald-500 hover:bg-emerald-600 text-white font-extrabold px-5 py-2.5 rounded-full shadow-lg text-sm transition cursor-pointer';
+                
+                if (floatText && floatBtn) {
+                    floatText.innerText = label;
+                    floatBtn.className = filled === 0 ? 'bg-blue-600 hover:bg-blue-700 text-white font-black px-6 py-3.5 rounded-full shadow-2xl border-4 border-white flex items-center gap-3 text-base transition-all cursor-pointer' : 'bg-emerald-500 hover:bg-emerald-600 text-white font-black px-6 py-3.5 rounded-full shadow-2xl border-4 border-white flex items-center gap-3 text-base transition-all cursor-pointer animate-bounce';
+                }
+            }
+
+            if (filled > 0 && (total === 0 || filled === total)) {
+                badge.className = 'text-xs font-bold px-3 py-1.5 rounded-full bg-emerald-100 text-emerald-800';
+                finishBtn.disabled = false;
+                finishBtn.className = 'bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2 rounded-lg font-bold shadow cursor-pointer transition';
+            } else {
+                badge.className = 'text-xs font-bold px-3 py-1.5 rounded-full bg-amber-100 text-amber-800';
+                finishBtn.disabled = true;
+                finishBtn.className = 'bg-slate-400 text-white px-6 py-2 rounded-lg font-bold shadow cursor-not-allowed transition';
+            }
+        }
+
+        // --- SIGNATURE MODAL ---
+        function setupSigPad() {
+            sigPad.canvas = document.getElementById('pad');
+            sigPad.ctx = sigPad.canvas.getContext('2d');
+            sigPad.ctx.lineWidth = 2.5; 
+            sigPad.ctx.lineCap = 'round'; 
+            sigPad.ctx.lineJoin = 'round'; 
+            sigPad.ctx.strokeStyle = "#000";
+
+            // Prevent mobile scrolling while drawing on canvas
+            sigPad.canvas.style.touchAction = "none";
+
+            function getPos(e) {
+                const rect = sigPad.canvas.getBoundingClientRect();
+                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+                return {
+                    x: clientX - rect.left,
+                    y: clientY - rect.top
+                };
+            }
+
+            function startDraw(e) {
+                if (e.cancelable) e.preventDefault();
+                sigPad.drawing = true;
+                const pos = getPos(e);
+                sigPad.ctx.beginPath();
+                sigPad.ctx.moveTo(pos.x, pos.y);
+            }
+
+            function moveDraw(e) {
+                if (!sigPad.drawing) return;
+                if (e.cancelable) e.preventDefault();
+                const pos = getPos(e);
+                sigPad.ctx.lineTo(pos.x, pos.y);
+                sigPad.ctx.stroke();
+            }
+
+            function stopDraw() {
+                sigPad.drawing = false;
+            }
+
+            // Mouse Event Listeners
+            sigPad.canvas.addEventListener('mousedown', startDraw);
+            sigPad.canvas.addEventListener('mousemove', moveDraw);
+            window.addEventListener('mouseup', stopDraw);
+
+            // Mobile Touch Event Listeners (iOS Safari, Android Chrome)
+            sigPad.canvas.addEventListener('touchstart', startDraw, { passive: false });
+            sigPad.canvas.addEventListener('touchmove', moveDraw, { passive: false });
+            window.addEventListener('touchend', stopDraw);
+            window.addEventListener('touchcancel', stopDraw);
+        }
+
+        let currentTab = 'draw';
+        let uploadedSigDataUrl = null;
+        let currentModalType = 'signature';
+
+        function openSigModal(type) {
+            currentModalType = type;
+            document.getElementById('modalTitle').innerText = type === 'signature' ? "Create Signature" : "Create Initials";
+            document.getElementById('sigModal').classList.remove('hidden');
+            clearPad(); 
+            document.getElementById('typeInput').value = "";
+            resetSigUpload();
+            switchTab('draw');
+        }
+        function closeModal() { document.getElementById('sigModal').classList.add('hidden'); }
+        
+        function switchTab(t) {
+            currentTab = t;
+            document.getElementById('drawArea').classList.toggle('hidden', t !== 'draw');
+            document.getElementById('typeArea').classList.toggle('hidden', t !== 'type');
+            document.getElementById('uploadArea').classList.toggle('hidden', t !== 'upload');
+
+            document.getElementById('tabDraw').className = t === 'draw' ? 'font-bold text-blue-600 border-b-2 border-blue-600 pb-1 cursor-pointer' : 'text-slate-500 font-bold hover:text-slate-700 pb-1 cursor-pointer';
+            document.getElementById('tabType').className = t === 'type' ? 'font-bold text-blue-600 border-b-2 border-blue-600 pb-1 cursor-pointer' : 'text-slate-500 font-bold hover:text-slate-700 pb-1 cursor-pointer';
+            document.getElementById('tabUpload').className = t === 'upload' ? 'font-bold text-blue-600 border-b-2 border-blue-600 pb-1 cursor-pointer' : 'text-slate-500 font-bold hover:text-slate-700 pb-1 cursor-pointer';
+        }
+
+        function handleSigFileUpload(e) {
+            const file = e.target.files ? e.target.files[0] : (e.dataTransfer ? e.dataTransfer.files[0] : null);
+            if (!file) return;
+            if (!file.type.startsWith('image/')) return alert("Please select a valid image file.");
+
+            const reader = new FileReader();
+            reader.onload = (evt) => {
+                const img = new Image();
+                img.onload = () => {
+                    const c = document.createElement('canvas');
+                    c.width = img.naturalWidth || 400;
+                    c.height = img.naturalHeight || 150;
+                    const ctx = c.getContext('2d');
+                    ctx.drawImage(img, 0, 0);
+                    uploadedSigDataUrl = c.toDataURL('image/png');
+
+                    document.getElementById('uploadDropzone').classList.add('hidden');
+                    document.getElementById('uploadPreviewWrap').classList.remove('hidden');
+                    document.getElementById('uploadPreviewImg').src = uploadedSigDataUrl;
+                };
+                img.src = evt.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function resetSigUpload() {
+            uploadedSigDataUrl = null;
+            const input = document.getElementById('sigFileInput');
+            if (input) input.value = '';
+            const dropzone = document.getElementById('uploadDropzone');
+            if (dropzone) dropzone.classList.remove('hidden');
+            const wrap = document.getElementById('uploadPreviewWrap');
+            if (wrap) wrap.classList.add('hidden');
+        }
+
+        function clearPad() { sigPad.ctx.clearRect(0, 0, 340, 150); }
+
+        function applySignature() {
+            let dataUrl;
+            if (currentTab === 'draw') {
+                dataUrl = sigPad.canvas.toDataURL();
+            } else if (currentTab === 'type') {
+                const text = document.getElementById('typeInput').value.trim();
+                if (!text) return alert("Please type your name");
+                const c = document.createElement('canvas'); c.width = 400; c.height = 100;
+                const cx = c.getContext('2d'); cx.font = "60px 'Great Vibes'"; cx.fillText(text, 10, 70);
+                dataUrl = c.toDataURL();
+            } else if (currentTab === 'upload') {
+                if (!uploadedSigDataUrl) return alert("Please select and upload a signature image file first.");
+                dataUrl = uploadedSigDataUrl;
+            }
+
+            const type = activeTargetBox ? activeTargetBox.dataset.type : currentModalType;
+            if (type === 'signature') savedSignature = dataUrl;
+            if (type === 'initial') savedInitial = dataUrl;
+
+            closeModal();
+            if (activeTargetBox) {
+                fillBoxWithImage(activeTargetBox, dataUrl, type);
+            }
+        }
+
+        let isSubmitting = false;
+        async function finish() {
+            if (isSubmitting) return;
+            isSubmitting = true;
+
+            const fields = [];
+            document.querySelectorAll('.assigned-guide-box.filled').forEach(box => {
+                fields.push({
+                    pageIndex: parseInt(box.dataset.pageIdx),
+                    xPercent: parseFloat(box.dataset.xPercent),
+                    yPercent: parseFloat(box.dataset.yPercent),
+                    wPercent: parseFloat(box.dataset.wPercent),
+                    hPercent: parseFloat(box.dataset.hPercent),
+                    type: box.dataset.type,
+                    value: box.dataset.val
+                });
+            });
+
+            if (fields.length === 0) {
+                isSubmitting = false;
+                return alert("Please fill your required assigned fields before finishing!");
+            }
+
+            const btn = document.getElementById('finishBtn'); 
+            if (btn) { btn.innerText = "Saving..."; btn.disabled = true; }
+
+            const fd = new FormData();
+            fd.append('fields', JSON.stringify(fields));
+            fd.append('signerIndex', signerIdx);
+
+            try {
+                const res = await fetch(`/api/sign/${id}`, { method: 'POST', body: fd });
+                const data = await res.json();
+                if (data.success) {
+                    document.body.innerHTML = `
+                    <div class="flex flex-col items-center justify-center min-h-screen bg-slate-50">
+                        <div class="bg-white p-10 rounded-2xl shadow-xl text-center max-w-md border border-slate-200">
+                            <div class="text-6xl mb-4">✅</div>
+                            <h1 class="text-2xl font-bold text-slate-900 mb-2">Signing Completed!</h1>
+                            <p class="text-slate-600 text-sm">Thank you for signing. Your responses have been recorded and saved.</p>
+                        </div>
+                    </div>`;
+                } else {
+                    alert("Error: " + data.error);
+                    isSubmitting = false;
+                    if (btn) { btn.innerText = "Finish"; btn.disabled = false; }
+                }
+            } catch (e) {
+                alert("Network Error");
+                isSubmitting = false;
+                if (btn) { btn.innerText = "Finish"; btn.disabled = false; }
+            }
+        }
+    </script>
+</body>
+</html>
