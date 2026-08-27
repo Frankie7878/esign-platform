@@ -74,6 +74,7 @@ app.get('/api/auth/github/callback', async (c) => {
 });
 
 // Serve Dashboard & Front-End Pages
+app.get('/', (c) => c.redirect('/index.html'));
 app.get('/dashboard', (c) => c.redirect('/dashboard.html'));
 
 // Health Check API
