@@ -267,6 +267,31 @@ app.get('/api/envelope/:id', async (c) => {
     });
 });
 
+// API: Download Completed PDF Document Package
+app.get('/api/download/:id', async (c) => {
+    const proxied = await proxyToBackend(c);
+    if (proxied) return proxied;
+
+    const id = c.req.param('id');
+    let env = ENVELOPES[id];
+    if (!env && c.env && c.env.ESIGN_KV) {
+        try {
+            const itemStr = await c.env.ESIGN_KV.get(`env_${id}`);
+            if (itemStr) env = JSON.parse(itemStr);
+        } catch(e){}
+    }
+
+    if (!env || !env.pdfBase64) return c.text("PDF file not found", 404);
+
+    const pdfBuf = Buffer.from(env.pdfBase64, 'base64');
+    return new Response(pdfBuf, {
+        headers: {
+            'Content-Type': 'application/pdf',
+            'Content-Disposition': `attachment; filename="Completed_${env.originalName || 'document'}.pdf"`
+        }
+    });
+});
+
 // API: Resend Notification Email to Current Signer
 app.post('/api/resend/:id', async (c) => {
     const proxied = await proxyToBackend(c);

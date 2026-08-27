@@ -471,6 +471,19 @@ app.get('/api/envelope/:id', (req, res) => {
     else res.status(404).send("File not found");
 });
 
+app.get('/api/download/:id', (req, res) => {
+    const id = req.params.id;
+    const env = getEnvelope(id);
+    if (!env) return res.status(404).send("Envelope not found");
+
+    const filePath = env.completedFilePath || env.filePath;
+    if (filePath && fs.existsSync(filePath)) {
+        res.download(path.resolve(filePath), `Completed_${env.originalName || 'document'}.pdf`);
+    } else {
+        res.status(404).send("PDF file not found");
+    }
+});
+
 // ======================================================
 // 3. ACTION: SIGN & BURN FEATURES
 // ======================================================
