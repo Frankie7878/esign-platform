@@ -133,50 +133,74 @@ app.get('/api/auth/github/callback', async (c) => {
 // Health Check API
 app.get('/api/health', (c) => c.json({ status: 'ok', service: 'E-Sign Platform Worker', timestamp: new Date().toISOString() }));
 
-// Serve Fresh Uncached HTML Pages
-app.get('/', async (c) => {
-    if (c.env && c.env.ASSETS) {
-        const req = new Request(new URL('/index.html', c.req.url), c.req.raw);
-        const res = await c.env.ASSETS.fetch(req);
-        const headers = new Headers(res.headers);
-        headers.set('Cache-Control', 'no-cache, no-store, must-revalidate');
-        return new Response(res.body, { status: res.status, headers });
-    }
-    return c.redirect('/index.html');
-});
+const PASSCODE_LOCK_HTML = `
+    <!-- MASTER PASSCODE LOCK MODAL -->
+    <div id="passcodeLockModal" class="fixed inset-0 bg-slate-900/95 backdrop-blur-md z-[9999] flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full p-8 text-center relative overflow-hidden">
+            <div class="w-16 h-16 bg-blue-50 border border-blue-200 text-blue-600 rounded-2xl flex items-center justify-center mx-auto text-3xl mb-4 shadow-sm">
+                🔒
+            </div>
+            <h2 class="text-2xl font-extrabold text-slate-900 mb-1">E-Sign Security Portal</h2>
+            <p class="text-xs text-slate-500 mb-6">Enter master passcode to unlock system access</p>
+            
+            <form onsubmit="verifyPasscode(event)" class="space-y-4">
+                <div>
+                    <input type="password" id="passcodeInput" placeholder="Enter Passcode" autofocus class="w-full text-center text-2xl font-mono tracking-widest border border-slate-300 p-3.5 rounded-xl outline-none focus:ring-2 focus:ring-blue-600 focus:border-blue-600 shadow-inner">
+                </div>
+                <p id="passcodeError" class="text-xs text-red-500 font-bold hidden">❌ Incorrect passcode. Try again.</p>
+                <button type="submit" class="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-md transition cursor-pointer text-sm">
+                    Unlock System 🔓
+                </button>
+            </form>
+        </div>
+    </div>
+    <script>
+        const MASTER_PASSCODE = "800618";
+        function checkPasscodeLock() {
+            const saved = localStorage.getItem('esign_passcode');
+            const modal = document.getElementById('passcodeLockModal');
+            if (saved === MASTER_PASSCODE) {
+                if (modal) modal.classList.add('hidden');
+            } else {
+                if (modal) modal.classList.remove('hidden');
+            }
+        }
+        function verifyPasscode(e) {
+            e.preventDefault();
+            const input = document.getElementById('passcodeInput').value.trim();
+            const err = document.getElementById('passcodeError');
+            if (input === MASTER_PASSCODE) {
+                localStorage.setItem('esign_passcode', MASTER_PASSCODE);
+                document.getElementById('passcodeLockModal').classList.add('hidden');
+            } else {
+                if (err) err.classList.remove('hidden');
+            }
+        }
+        document.addEventListener('DOMContentLoaded', checkPasscodeLock);
+    </script>
+`;
 
-app.get('/index.html', async (c) => {
+async function serveHtmlWithPasscodeLock(c, assetPath) {
     if (c.env && c.env.ASSETS) {
-        const req = new Request(new URL('/index.html', c.req.url), c.req.raw);
+        const req = new Request(new URL(assetPath, c.req.url), c.req.raw);
         const res = await c.env.ASSETS.fetch(req);
+        let html = await res.text();
+        if (!html.includes('passcodeLockModal')) {
+            html = html.replace('<body', `${PASSCODE_LOCK_HTML}\n<body`);
+        }
         const headers = new Headers(res.headers);
         headers.set('Cache-Control', 'no-cache, no-store, must-revalidate');
-        return new Response(res.body, { status: res.status, headers });
+        headers.set('Content-Type', 'text/html; charset=utf-8');
+        return new Response(html, { status: 200, headers });
     }
     return c.notFound();
-});
+}
 
-app.get('/dashboard', async (c) => {
-    if (c.env && c.env.ASSETS) {
-        const req = new Request(new URL('/dashboard.html', c.req.url), c.req.raw);
-        const res = await c.env.ASSETS.fetch(req);
-        const headers = new Headers(res.headers);
-        headers.set('Cache-Control', 'no-cache, no-store, must-revalidate');
-        return new Response(res.body, { status: res.status, headers });
-    }
-    return c.redirect('/dashboard.html');
-});
-
-app.get('/dashboard.html', async (c) => {
-    if (c.env && c.env.ASSETS) {
-        const req = new Request(new URL('/dashboard.html', c.req.url), c.req.raw);
-        const res = await c.env.ASSETS.fetch(req);
-        const headers = new Headers(res.headers);
-        headers.set('Cache-Control', 'no-cache, no-store, must-revalidate');
-        return new Response(res.body, { status: res.status, headers });
-    }
-    return c.notFound();
-});
+// Serve Fresh Uncached HTML Pages with Passcode Lock
+app.get('/', (c) => serveHtmlWithPasscodeLock(c, '/index.html'));
+app.get('/index.html', (c) => serveHtmlWithPasscodeLock(c, '/index.html'));
+app.get('/dashboard', (c) => serveHtmlWithPasscodeLock(c, '/dashboard.html'));
+app.get('/dashboard.html', (c) => serveHtmlWithPasscodeLock(c, '/dashboard.html'));
 
 // API: Send Envelope (Upload PDFs & Create Chain)
 app.post('/api/send', async (c) => {
