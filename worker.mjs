@@ -231,6 +231,47 @@ app.get('/api/envelope/:id', async (c) => {
     });
 });
 
+// API: Resend Notification Email to Current Signer
+app.post('/api/resend/:id', async (c) => {
+    try {
+        const id = c.req.param('id');
+        let env = ENVELOPES[id];
+        if (!env && c.env && c.env.ESIGN_KV) {
+            try {
+                const itemStr = await c.env.ESIGN_KV.get(`env_${id}`);
+                if (itemStr) env = JSON.parse(itemStr);
+            } catch(e){}
+        }
+
+        if (!env) return c.json({ error: "Envelope not found" }, 404);
+
+        const currentSigner = env.recipients[env.currentRecipientIndex];
+        if (!currentSigner) return c.json({ error: "No active recipient to resend email to" }, 400);
+
+        const signUrl = `https://docusign.frank-zhang.com/signer.html?id=${id}`;
+        const emailSent = await sendWorkerEmail({
+            toEmail: currentSigner.email,
+            toName: currentSigner.name,
+            subject: `Reminder: Please Sign ${env.originalName}`,
+            htmlContent: `
+                <div style="font-family: Arial, sans-serif; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; max-width: 550px; margin: 0 auto; background-color: #ffffff;">
+                    <h2 style="color: #0f172a; margin-top: 0; font-size: 20px;">🔔 Signature Reminder</h2>
+                    <p style="color: #334155; font-size: 14px;">Hello <b>${currentSigner.name}</b>,</p>
+                    <p style="color: #334155; font-size: 14px;">This is a friendly reminder to review and sign the document package (<b>${env.originalName}</b>).</p>
+                    <div style="margin: 28px 0; text-align: center;">
+                        <a href="${signUrl}" style="background-color: #2563eb; color: #ffffff; padding: 14px 30px; font-weight: bold; border-radius: 8px; text-decoration: none; display: inline-block; font-size: 15px;">Review & Sign Document</a>
+                    </div>
+                </div>
+            `
+        });
+
+        return c.json({ success: true, message: `Reminder email resent to ${currentSigner.email}`, sentTo: currentSigner.email, emailSent });
+    } catch(e) {
+        console.error("Worker RESEND ERROR:", e);
+        return c.json({ error: e.message }, 500);
+    }
+});
+
 // API: Submit Recipient Signature
 app.post('/api/sign', async (c) => {
     try {

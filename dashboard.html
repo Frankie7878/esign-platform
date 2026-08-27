@@ -277,14 +277,21 @@
             if (!confirm(`Resend notification email to current signer for Envelope #${id}?`)) return;
             try {
                 const res = await fetch(`/api/resend/${id}`, { method: 'POST' });
-                const data = await res.json();
+                const text = await res.text();
+                let data;
+                try {
+                    data = JSON.parse(text);
+                } catch (jsonErr) {
+                    throw new Error("Server response error: " + text.substring(0, 150));
+                }
+
                 if (data.success) {
-                    alert(`✅ Notification email resent to ${data.sentTo}!`);
+                    alert(`✅ ${data.message || 'Notification email resent successfully!'}`);
                 } else {
-                    alert("Error: " + data.error);
+                    alert("Error: " + (data.error || "Failed to resend email"));
                 }
             } catch (e) {
-                alert("Network Error");
+                alert("Error: " + e.message);
             }
         }
 
