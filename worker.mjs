@@ -1,10 +1,6 @@
 import { Hono } from 'hono';
-import { serveStatic } from 'hono/cloudflare-workers';
 
 const app = new Hono();
-
-// Serve Static Assets (index.html, signer.html, dashboard.html, js/...)
-app.use('/*', serveStatic({ root: './' }));
 
 const GITHUB_CLIENT_ID = 'Ov23liTMskA0wVZzq2ee';
 const GITHUB_CLIENT_SECRET = '03bc8d55baa1b578e1ccc95787494b25e76c997d';
@@ -77,11 +73,19 @@ app.get('/api/auth/github/callback', async (c) => {
     }
 });
 
-// Serve Dashboard & Front-End Pages
+// Health Check API
+app.get('/api/health', (c) => c.json({ status: 'ok', service: 'E-Sign Platform Worker', timestamp: new Date().toISOString() }));
+
+// Root Redirect to /index.html & /dashboard.html
 app.get('/', (c) => c.redirect('/index.html'));
 app.get('/dashboard', (c) => c.redirect('/dashboard.html'));
 
-// Health Check API
-app.get('/api/health', (c) => c.json({ status: 'ok', service: 'E-Sign Platform Worker', timestamp: new Date().toISOString() }));
+// Serve Static Assets (index.html, signer.html, dashboard.html, js/...) from Cloudflare ASSETS binding
+app.get('*', async (c) => {
+    if (c.env && c.env.ASSETS) {
+        return c.env.ASSETS.fetch(c.req.raw);
+    }
+    return c.text('Asset Not Found', 404);
+});
 
 export default app;
