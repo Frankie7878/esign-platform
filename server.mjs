@@ -518,9 +518,38 @@ async function finalizeEnvelope(id, env) {
         repairPdfPageTree(pdfDoc);
         try {
             const acroFormKey = pdfDoc.catalog.keys().find(k => k.toString() === '/AcroForm');
-            if (acroFormKey) {
-                pdfDoc.catalog.delete(acroFormKey);
-            }
+            if (acroFormKey) pdfDoc.catalog.delete(acroFormKey);
+
+            pdfDoc.getPages().forEach(page => {
+                const annots = page.node.Annots();
+                if (annots instanceof PDFArray) {
+                    const filtered = [];
+                    for (let i = 0; i < annots.size(); i++) {
+                        const annotRef = annots.get(i);
+                        const annot = pdfDoc.context.lookup(annotRef);
+                        if (annot instanceof PDFDict) {
+                            const subtype = annot.get(PDFName.of("Subtype"));
+                            const ft = annot.get(PDFName.of("FT"));
+                            if (subtype?.toString() === "/Sig" || ft?.toString() === "/Sig") {
+                                continue;
+                            }
+                        }
+                        filtered.push(annotRef);
+                    }
+                    page.node.set(PDFName.of("Annots"), pdfDoc.context.obj(filtered));
+                }
+            });
+
+            const allRefs = pdfDoc.context.enumerateIndirectObjects();
+            allRefs.forEach(([ref, obj]) => {
+                if (obj instanceof PDFDict) {
+                    const type = obj.get(PDFName.of("Type"));
+                    const ft = obj.get(PDFName.of("FT"));
+                    if (type?.toString() === "/Sig" || ft?.toString() === "/Sig") {
+                        pdfDoc.context.delete(ref);
+                    }
+                }
+            });
         } catch (e) {}
 
         const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -555,20 +584,18 @@ async function finalizeEnvelope(id, env) {
         const p12Signature = new P12Signer(p12Buffer, { passphrase: 'password' });
         const placeholderResult = plainAddPlaceholder({
             pdfBuffer: pdfBuffer,
-            reason: 'Certified by E-Sign App',
+            name: 'E-Sign Security Certification Authority',
+            reason: 'Certified by E-Sign Platform Legal Trust Services',
+            location: 'Toronto, ON, Canada',
             signatureLength: 16000 
         });
         const signedPdf = await new SignPdf().sign(placeholderResult, p12Signature);
 
-        // Save completed PDF file & rebuild xref table with qpdf for 100% Adobe Acrobat Reader compatibility
+        // Save completed signed PDF directly to preserve 100% cryptographic signature byte integrity
         const completedPath = path.join('uploads', `completed_${id}.pdf`);
-        const tempSignedPath = path.join('uploads', `temp_signed_${id}.pdf`);
-        fs.writeFileSync(tempSignedPath, signedPdf);
+        fs.writeFileSync(completedPath, signedPdf);
 
-        safeQpdfRepair(tempSignedPath, completedPath);
-        try { if (fs.existsSync(tempSignedPath)) fs.unlinkSync(tempSignedPath); } catch(e){}
-
-        const finalCompletedBuffer = fs.readFileSync(completedPath);
+        const finalCompletedBuffer = signedPdf;
 
         // Send final completed signed document PDF & Certificate to ALL recipients AND the Sender
         const finalEmails = new Set(env.recipients.map(r => r.email));
