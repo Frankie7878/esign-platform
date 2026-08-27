@@ -6,8 +6,30 @@ const app = new Hono();
 const GITHUB_CLIENT_ID = 'Ov23liTMskA0wVZzq2ee';
 const GITHUB_CLIENT_SECRET = '03bc8d55baa1b578e1ccc95787494b25e76c997d';
 
-// In-Memory Global Envelope Store for Cloudflare Worker
+// Global Memory Store Fallback
 const ENVELOPES = {};
+
+// Helper: Send Transactional Email via Mailchannels (Free for Cloudflare Workers)
+async function sendWorkerEmail({ toEmail, toName, subject, htmlContent }) {
+    try {
+        const payload = {
+            personalizations: [{ to: [{ email: toEmail, name: toName || toEmail }] }],
+            from: { email: "noreply@docusign.frank-zhang.com", name: "E-Sign Platform" },
+            subject: subject,
+            content: [{ type: "text/html", value: htmlContent }]
+        };
+        const res = await fetch('https://api.mailchannels.net/tx/v1/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        console.log(`Mailchannels email status for ${toEmail}:`, res.status);
+        return res.ok;
+    } catch(e) {
+        console.error("Mailchannels Email Error:", e);
+        return false;
+    }
+}
 
 // GitHub OAuth Authorization
 app.get('/api/auth/github', (c) => {
@@ -80,7 +102,7 @@ app.get('/api/auth/github/callback', async (c) => {
 // Health Check API
 app.get('/api/health', (c) => c.json({ status: 'ok', service: 'E-Sign Platform Worker', timestamp: new Date().toISOString() }));
 
-// Root Redirect to /index.html & /dashboard.html
+// Root Redirects
 app.get('/', (c) => c.redirect('/index.html'));
 app.get('/dashboard', (c) => c.redirect('/dashboard.html'));
 
@@ -132,6 +154,32 @@ app.post('/api/send', async (c) => {
         };
 
         ENVELOPES[envelopeId] = envObj;
+        if (c.env && c.env.ESIGN_KV) {
+            try { await c.env.ESIGN_KV.put(`env_${envelopeId}`, JSON.stringify(envObj)); } catch(e){}
+        }
+
+        // Send Email Notification to First Signer via Mailchannels
+        if (recipients.length > 0) {
+            const firstSigner = recipients[0];
+            const signUrl = `https://docusign.frank-zhang.com/signer.html?id=${envelopeId}`;
+            await sendWorkerEmail({
+                toEmail: firstSigner.email,
+                toName: firstSigner.name,
+                subject: `Please Sign: ${envObj.originalName}`,
+                htmlContent: `
+                    <div style="font-family: Arial, sans-serif; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; max-width: 550px; margin: 0 auto; background-color: #ffffff;">
+                        <h2 style="color: #0f172a; margin-top: 0; font-size: 20px;">✍️ Signature Request</h2>
+                        <p style="color: #334155; font-size: 14px;">Hello <b>${firstSigner.name}</b>,</p>
+                        <p style="color: #334155; font-size: 14px;"><b>${senderName}</b> has sent you a document package (<b>${envObj.originalName}</b>) for your electronic signature.</p>
+                        <div style="margin: 28px 0; text-align: center;">
+                            <a href="${signUrl}" style="background-color: #2563eb; color: #ffffff; padding: 14px 30px; font-weight: bold; border-radius: 8px; text-decoration: none; display: inline-block; font-size: 15px; shadow: 0 4px 6px -1px rgba(0,0,0,0.1);">Review & Sign Document</a>
+                        </div>
+                        <hr style="border: none; border-top: 1px solid #f1f5f9; margin: 24px 0;">
+                        <p style="font-size: 11px; color: #94a3b8; margin: 0;">Direct Link: <a href="${signUrl}" style="color: #3b82f6;">${signUrl}</a></p>
+                    </div>
+                `
+            });
+        }
 
         return c.json({ success: true, envelopeId });
     } catch(e) {
@@ -141,14 +189,32 @@ app.post('/api/send', async (c) => {
 });
 
 // API: Fetch All Envelopes for Dashboard
-app.get('/api/envelopes', (c) => {
+app.get('/api/envelopes', async (c) => {
+    if (c.env && c.env.ESIGN_KV) {
+        try {
+            const list = await c.env.ESIGN_KV.list({ prefix: 'env_' });
+            const envs = [];
+            for (const key of list.keys) {
+                const itemStr = await c.env.ESIGN_KV.get(key.name);
+                if (itemStr) envs.push(JSON.parse(itemStr));
+            }
+            if (envs.length > 0) return c.json(envs);
+        } catch(e){}
+    }
     return c.json(Object.values(ENVELOPES));
 });
 
 // API: Fetch Single Envelope Info / PDF
-app.get('/api/envelope/:id', (c) => {
+app.get('/api/envelope/:id', async (c) => {
     const id = c.req.param('id');
-    const env = ENVELOPES[id];
+    let env = ENVELOPES[id];
+    if (!env && c.env && c.env.ESIGN_KV) {
+        try {
+            const itemStr = await c.env.ESIGN_KV.get(`env_${id}`);
+            if (itemStr) env = JSON.parse(itemStr);
+        } catch(e){}
+    }
+
     if (!env) return c.json({ error: "Envelope not found" }, 404);
 
     const accept = c.req.header('Accept') || '';
@@ -170,7 +236,14 @@ app.post('/api/sign', async (c) => {
     try {
         const body = await c.req.json();
         const { envelopeId, fields } = body;
-        const env = ENVELOPES[envelopeId];
+        let env = ENVELOPES[envelopeId];
+        if (!env && c.env && c.env.ESIGN_KV) {
+            try {
+                const itemStr = await c.env.ESIGN_KV.get(`env_${envelopeId}`);
+                if (itemStr) env = JSON.parse(itemStr);
+            } catch(e){}
+        }
+
         if (!env) return c.json({ error: "Envelope not found" }, 404);
 
         const pdfBuf = Buffer.from(env.pdfBase64, 'base64');
@@ -212,6 +285,32 @@ app.post('/api/sign', async (c) => {
 
         const updatedBytes = await pdfDoc.save({ useObjectStreams: false });
         env.pdfBase64 = Buffer.from(updatedBytes).toString('base64');
+
+        ENVELOPES[envelopeId] = env;
+        if (c.env && c.env.ESIGN_KV) {
+            try { await c.env.ESIGN_KV.put(`env_${envelopeId}`, JSON.stringify(env)); } catch(e){}
+        }
+
+        // Notify Next Signer if in_progress
+        if (env.status === 'in_progress' && env.recipients[env.currentRecipientIndex]) {
+            const nextSigner = env.recipients[env.currentRecipientIndex];
+            const signUrl = `https://docusign.frank-zhang.com/signer.html?id=${envelopeId}`;
+            await sendWorkerEmail({
+                toEmail: nextSigner.email,
+                toName: nextSigner.name,
+                subject: `Your Turn to Sign: ${env.originalName}`,
+                htmlContent: `
+                    <div style="font-family: Arial, sans-serif; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; max-width: 550px; margin: 0 auto; background-color: #ffffff;">
+                        <h2 style="color: #0f172a; margin-top: 0; font-size: 20px;">✍️ Your Turn to Sign</h2>
+                        <p style="color: #334155; font-size: 14px;">Hello <b>${nextSigner.name}</b>,</p>
+                        <p style="color: #334155; font-size: 14px;">It is now your turn to sign the document package (<b>${env.originalName}</b>).</p>
+                        <div style="margin: 28px 0; text-align: center;">
+                            <a href="${signUrl}" style="background-color: #2563eb; color: #ffffff; padding: 14px 30px; font-weight: bold; border-radius: 8px; text-decoration: none; display: inline-block; font-size: 15px;">Review & Sign Document</a>
+                        </div>
+                    </div>
+                `
+            });
+        }
 
         return c.json({ success: true, completed: env.status === 'completed' });
     } catch(e) {
