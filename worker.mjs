@@ -311,6 +311,24 @@ app.post('/api/resend/:id', async (c) => {
     }
 });
 
+// API: Cancel / Delete Envelope
+app.post('/api/cancel/:id', async (c) => {
+    const proxied = await proxyToBackend(c);
+    if (proxied) return proxied;
+
+    try {
+        const id = c.req.param('id');
+        delete ENVELOPES[id];
+        if (c.env && c.env.ESIGN_KV) {
+            try { await c.env.ESIGN_KV.delete(`env_${id}`); } catch(e){}
+        }
+        return c.json({ success: true });
+    } catch(e) {
+        console.error("Worker CANCEL ERROR:", e);
+        return c.json({ error: e.message }, 500);
+    }
+});
+
 // API: Submit Recipient Signature
 app.post('/api/sign/:id', async (c) => {
     const proxied = await proxyToBackend(c);

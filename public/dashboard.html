@@ -261,15 +261,22 @@
             if (!confirm(`Are you sure you want to CANCEL and DELETE Envelope #${id}?\n\nThis will void all signing links for recipients.`)) return;
             try {
                 const res = await fetch(`/api/cancel/${id}`, { method: 'POST' });
-                const data = await res.json();
+                const text = await res.text();
+                let data;
+                try {
+                    data = JSON.parse(text);
+                } catch (jsonErr) {
+                    throw new Error("Server response error: " + text.substring(0, 150));
+                }
+
                 if (data.success) {
                     alert(`✅ Envelope #${id} has been cancelled.`);
                     loadEnvelopes();
                 } else {
-                    alert("Error: " + data.error);
+                    alert("Error: " + (data.error || "Failed to cancel envelope"));
                 }
             } catch (e) {
-                alert("Network Error");
+                alert("Error: " + e.message);
             }
         }
 
