@@ -431,8 +431,25 @@ app.post('/api/cancel/:id', async (c) => {
 // API: Submit Recipient Signature
 app.post('/api/sign/:id', async (c) => {
     try {
-        const body = await c.req.json();
-        const { envelopeId, fields } = body;
+        const id = c.req.param('id');
+        let fields = [];
+        const contentType = c.req.header('Content-Type') || '';
+        
+        if (contentType.includes('application/json')) {
+            const body = await c.req.json();
+            fields = body.fields || [];
+        } else {
+            const body = await c.req.parseBody();
+            if (body.fields) {
+                try {
+                    fields = typeof body.fields === 'string' ? JSON.parse(body.fields) : body.fields;
+                } catch(e) {
+                    fields = [];
+                }
+            }
+        }
+
+        const envelopeId = id;
         let env = ENVELOPES[envelopeId];
         if (!env && c.env && c.env.ESIGN_KV) {
             try {
