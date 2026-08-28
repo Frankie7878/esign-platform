@@ -48,12 +48,42 @@ function getWorkerP12Password(c) {
     return 'password';
 }
 
-// Helper: Send Transactional Email via Mailchannels (Free for Cloudflare Workers)
-async function sendWorkerEmail({ toEmail, toName, subject, htmlContent, attachments = [] }) {
+// Helper: Send Transactional Email (Resend API or Mailchannels)
+async function sendWorkerEmail(c, { toEmail, toName, subject, htmlContent, attachments = [] }) {
+    if (c && c.env && c.env.RESEND_API_KEY) {
+        try {
+            const resendPayload = {
+                from: "E-Sign Platform <noreply@frank-zhang.com>",
+                to: [toEmail],
+                subject: subject,
+                html: htmlContent
+            };
+            if (attachments && attachments.length > 0) {
+                resendPayload.attachments = attachments.map(a => ({
+                    content: a.content.toString('base64'),
+                    filename: a.filename
+                }));
+            }
+            const res = await fetch("https://api.resend.com/emails", {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${c.env.RESEND_API_KEY}`,
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify(resendPayload)
+            });
+            const resText = await res.text();
+            console.log(`Resend Send Status (${res.status}):`, resText);
+            if (res.ok) return true;
+        } catch(e) {
+            console.error("Resend send error:", e);
+        }
+    }
+
     try {
         const payload = {
             personalizations: [{ to: [{ email: toEmail, name: toName || toEmail }] }],
-            from: { email: "noreply@docusign.frank-zhang.com", name: "E-Sign Platform" },
+            from: { email: "noreply@frank-zhang.com", name: "E-Sign Platform" },
             subject: subject,
             content: [{ type: "text/html", value: htmlContent }]
         };
@@ -68,9 +98,14 @@ async function sendWorkerEmail({ toEmail, toName, subject, htmlContent, attachme
 
         const res = await fetch("https://api.mailchannels.net/tx/v1/send", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { 
+                "Content-Type": "application/json",
+                "X-MC-Relay": "true"
+            },
             body: JSON.stringify(payload)
         });
+        const resText = await res.text();
+        console.log(`Mailchannels Send Status (${res.status}):`, resText);
         return res.ok;
     } catch(err) {
         console.error("Mailchannels send error:", err);
@@ -189,7 +224,7 @@ app.post('/api/send', async (c) => {
         if (recipients.length > 0) {
             const firstSigner = recipients[0];
             const signUrl = `https://docusign.frank-zhang.com/signer.html?id=${envelopeId}`;
-            await sendWorkerEmail({
+            await sendWorkerEmail(c, {
                 toEmail: firstSigner.email,
                 toName: firstSigner.name,
                 subject: `Please Sign: ${envObj.originalName}`,
@@ -296,7 +331,7 @@ app.post('/api/resend/:id', async (c) => {
         if (!currentSigner) return c.json({ error: "No active recipient to resend email to" }, 400);
 
         const signUrl = `https://docusign.frank-zhang.com/signer.html?id=${id}`;
-        const emailSent = await sendWorkerEmail({
+        const emailSent = await sendWorkerEmail(c, {
             toEmail: currentSigner.email,
             toName: currentSigner.name,
             subject: `Reminder: Please Sign ${env.originalName}`,
@@ -437,7 +472,7 @@ app.post('/api/sign/:id', async (c) => {
             if (env.senderEmail) finalEmails.add(env.senderEmail);
 
             for (const recipientEmail of finalEmails) {
-                await sendWorkerEmail({
+                await sendWorkerEmail(c, {
                     toEmail: recipientEmail,
                     subject: `Completed: ${env.emailSubject}`,
                     htmlContent: `
@@ -455,7 +490,7 @@ app.post('/api/sign/:id', async (c) => {
             const nextSigner = env.recipients[env.currentRecipientIndex];
             if (nextSigner) {
                 const signUrl = `https://docusign.frank-zhang.com/signer.html?id=${envelopeId}`;
-                await sendWorkerEmail({
+                await sendWorkerEmail(c, {
                     toEmail: nextSigner.email,
                     toName: nextSigner.name,
                     subject: `Please Sign: ${env.originalName}`,
