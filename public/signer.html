@@ -116,9 +116,10 @@
     </div>
 
     <script>
-        const id = window.location.pathname.split('/').pop();
         const urlParams = new URLSearchParams(window.location.search);
-        const signerIdx = urlParams.get('idx');
+        let id = urlParams.get('id') || window.location.pathname.split('/').pop();
+        if (id === 'signer.html' || !id) id = urlParams.get('id') || '';
+        const signerIdx = urlParams.get('idx') || '0';
 
         let pdfDoc = null;
         let assignedFields = [];

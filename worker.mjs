@@ -169,6 +169,60 @@ app.get('/', (c) => serveHtmlWithPasscodeLock(c, '/index.html'));
 app.get('/index.html', (c) => serveHtmlWithPasscodeLock(c, '/index.html'));
 app.get('/dashboard', (c) => serveHtmlWithPasscodeLock(c, '/dashboard.html'));
 app.get('/dashboard.html', (c) => serveHtmlWithPasscodeLock(c, '/dashboard.html'));
+app.get('/signer.html', (c) => serveHtmlWithPasscodeLock(c, '/signer.html'));
+app.get('/sign/:id', (c) => serveHtmlWithPasscodeLock(c, '/signer.html'));
+
+// API: Fetch Signer Info & Assigned Fields
+app.get('/api/envelope-info/:id', async (c) => {
+    const id = c.req.param('id');
+    let env = ENVELOPES[id];
+    if (!env && c.env && c.env.ESIGN_KV) {
+        try {
+            const itemStr = await c.env.ESIGN_KV.get(`env_${id}`);
+            if (itemStr) env = JSON.parse(itemStr);
+        } catch(e){}
+    }
+
+    if (!env) return c.json({ error: "Document package not found or link has expired." }, 404);
+
+    if (env.status === 'voided' || env.status === 'cancelled') {
+        return c.json({
+            error: "voided",
+            message: "This document package has been cancelled or voided by the sender."
+        });
+    }
+
+    const idxStr = c.req.query('idx');
+    const idx = idxStr ? parseInt(idxStr) : 0;
+
+    if (idx < env.currentRecipientIndex) {
+        return c.json({
+            error: "already_signed",
+            signerName: env.recipients[idx] ? env.recipients[idx].name : "Signer",
+            message: "You have already completed signing this document."
+        });
+    }
+
+    if (idx > env.currentRecipientIndex && env.status !== 'completed') {
+        const currentSigner = env.recipients[env.currentRecipientIndex];
+        return c.json({
+            error: "not_your_turn",
+            currentSignerName: currentSigner ? currentSigner.name : "previous signer",
+            message: `It is not your turn yet. Currently waiting for ${currentSigner ? currentSigner.name : 'previous signer'} to finish.`
+        });
+    }
+
+    const signer = env.recipients[idx];
+    const assignedFields = (env.assignedFields || []).filter(f => f.signerIndex === idx || f.signerEmail === (signer ? signer.email : ''));
+
+    return c.json({
+        id: env.id,
+        signerName: signer ? signer.name : "Signer",
+        signerEmail: signer ? signer.email : "",
+        assignedFields: assignedFields,
+        status: env.status
+    });
+});
 
 // API: Send Envelope (Upload PDFs & Create Chain)
 app.post('/api/send', async (c) => {
