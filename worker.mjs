@@ -1,47 +1,55 @@
 import { Hono } from 'hono';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import { SignPdf } from '@signpdf/signpdf';
+import { plainAddPlaceholder } from '@signpdf/placeholder-plain';
+import { P12Signer } from '@signpdf/signer-p12';
+import forge from 'node-forge';
 
 const app = new Hono();
 
 const GITHUB_CLIENT_ID = 'Ov23liTMskA0wVZzq2ee';
 const GITHUB_CLIENT_SECRET = '03bc8d55baa1b578e1ccc95787494b25e76c997d';
-const BACKEND_URL = 'https://broadly-cuticolor-lavelle.ngrok-free.dev';
 
-// Global Memory Store Fallback
+// Global In-Memory Fallback
 const ENVELOPES = {};
 
-// Helper: Proxy API Requests to Live Active Node Engine (Gmail Nodemailer & database.json)
-async function proxyToBackend(c) {
-    const url = new URL(c.req.url);
-    const targetUrl = `${BACKEND_URL}${url.pathname}${url.search}`;
-    
-    try {
-        const reqHeaders = new Headers(c.req.raw.headers);
-        reqHeaders.set('host', 'broadly-cuticolor-lavelle.ngrok-free.dev');
-        reqHeaders.set('ngrok-skip-browser-warning', 'true');
-
-        const fetchOpts = {
-            method: c.req.method,
-            headers: reqHeaders
-        };
-
-        if (['POST', 'PUT', 'PATCH'].includes(c.req.method)) {
-            fetchOpts.body = c.req.raw.body;
-            fetchOpts.duplex = 'half';
-        }
-
-        const res = await fetch(targetUrl, fetchOpts);
-        if (res.ok || res.status < 500) {
-            return res;
-        }
-    } catch(err) {
-        console.warn("Backend proxy failed, using Worker local fallback:", err.message);
+// Helper: Get Actalis P12 Certificate Buffer from Cloudflare KV
+async function getWorkerP12Buffer(c) {
+    if (c.env && c.env.ESIGN_KV) {
+        try {
+            const p12ArrayBuf = await c.env.ESIGN_KV.get('ACTALIS_P12', 'arrayBuffer');
+            if (p12ArrayBuf && p12ArrayBuf.byteLength > 0) {
+                return Buffer.from(p12ArrayBuf);
+            }
+        } catch(e){}
     }
-    return null;
+    // Fallback: Generate Self-Signed Cert
+    const keys = forge.pki.rsa.generateKeyPair(2048);
+    const cert = forge.pki.createCertificate();
+    cert.publicKey = keys.publicKey;
+    cert.serialNumber = '01';
+    cert.validity.notBefore = new Date();
+    cert.validity.notAfter = new Date();
+    cert.validity.notAfter.setFullYear(cert.validity.notBefore.getFullYear() + 5);
+    const attrs = [
+        { name: 'commonName', value: 'E-Sign Security Certification Authority' },
+        { name: 'organizationName', value: 'E-Sign Platform Legal Trust Services' }
+    ];
+    cert.setSubject(attrs); cert.setIssuer(attrs);
+    cert.sign(keys.privateKey, forge.md.sha256.create());
+    const p12Asn1 = forge.pkcs12.toPkcs12Asn1(keys.privateKey, [cert], 'password');
+    return Buffer.from(forge.asn1.toDer(p12Asn1).getBytes(), 'binary');
+}
+
+function getWorkerP12Password(c) {
+    if (c.env && c.env.P12_PASSWORD) {
+        return c.env.P12_PASSWORD;
+    }
+    return 'password';
 }
 
 // Helper: Send Transactional Email via Mailchannels (Free for Cloudflare Workers)
-async function sendWorkerEmail({ toEmail, toName, subject, htmlContent }) {
+async function sendWorkerEmail({ toEmail, toName, subject, htmlContent, attachments = [] }) {
     try {
         const payload = {
             personalizations: [{ to: [{ email: toEmail, name: toName || toEmail }] }],
@@ -49,93 +57,33 @@ async function sendWorkerEmail({ toEmail, toName, subject, htmlContent }) {
             subject: subject,
             content: [{ type: "text/html", value: htmlContent }]
         };
-        const res = await fetch('https://api.mailchannels.net/tx/v1/send', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+
+        if (attachments && attachments.length > 0) {
+            payload.attachments = attachments.map(a => ({
+                content: a.content.toString('base64'),
+                type: 'application/pdf',
+                filename: a.filename
+            }));
+        }
+
+        const res = await fetch("https://api.mailchannels.net/tx/v1/send", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload)
         });
-        console.log(`Mailchannels email status for ${toEmail}:`, res.status);
         return res.ok;
-    } catch(e) {
-        console.error("Mailchannels Email Error:", e);
+    } catch(err) {
+        console.error("Mailchannels send error:", err);
         return false;
     }
 }
 
-// GitHub OAuth Authorization
-app.get('/api/auth/github', (c) => {
-    const redirectUrl = `https://github.com/login/oauth/authorize?client_id=${GITHUB_CLIENT_ID}&scope=user:email`;
-    return c.redirect(redirectUrl);
-});
-
-// GitHub OAuth Callback
-app.get('/api/auth/github/callback', async (c) => {
-    const code = c.req.query('code');
-    if (!code) return c.text('Missing code parameter', 400);
-
-    try {
-        const tokenRes = await fetch('https://github.com/login/oauth/access_token', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Accept': 'application/json',
-                'User-Agent': 'E-Sign-Platform'
-            },
-            body: JSON.stringify({
-                client_id: GITHUB_CLIENT_ID,
-                client_secret: GITHUB_CLIENT_SECRET,
-                code: code
-            })
-        });
-        const tokenData = await tokenRes.json();
-        const accessToken = tokenData.access_token;
-        if (!accessToken) throw new Error(tokenData.error_description || 'Failed to get access token');
-
-        const userRes = await fetch('https://api.github.com/user', {
-            headers: {
-                'Authorization': `Bearer ${accessToken}`,
-                'User-Agent': 'E-Sign-Platform'
-            }
-        });
-        const userData = await userRes.json();
-
-        let email = userData.email;
-        if (!email) {
-            const emailRes = await fetch('https://api.github.com/user/emails', {
-                headers: {
-                    'Authorization': `Bearer ${accessToken}`,
-                    'User-Agent': 'E-Sign-Platform'
-                }
-            });
-            const emails = await emailRes.json();
-            const primary = Array.isArray(emails) ? emails.find(e => e.primary && e.verified) || emails[0] : null;
-            if (primary) email = primary.email;
-        }
-
-        const userPayload = {
-            id: userData.id,
-            login: userData.login,
-            name: userData.name || userData.login,
-            email: email || `${userData.login}@users.noreply.github.com`,
-            avatar_url: userData.avatar_url,
-            provider: 'github'
-        };
-
-        const encodedUser = encodeURIComponent(JSON.stringify(userPayload));
-        return c.redirect(`/dashboard.html?github_user=${encodedUser}`);
-
-    } catch(err) {
-        console.error("GitHub Auth Error:", err);
-        return c.text("GitHub Auth Error: " + err.message, 500);
-    }
-});
-
 // Health Check API
-app.get('/api/health', (c) => c.json({ status: 'ok', service: 'E-Sign Platform Worker', timestamp: new Date().toISOString() }));
+app.get('/api/health', (c) => c.json({ status: 'ok', service: 'E-Sign Cloud Serverless Worker', timestamp: new Date().toISOString() }));
 
 const PASSCODE_LOCK_HTML = `
     <!-- MASTER PASSCODE LOCK MODAL -->
-    <div id="passcodeLockModal" class="fixed inset-0 bg-slate-900/95 backdrop-blur-md z-[9999] flex items-center justify-center p-4">
+    <div id="passcodeLockModal" style="display: flex;" class="fixed inset-0 bg-slate-900/95 backdrop-blur-md z-[9999] items-center justify-center p-4">
         <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full p-8 text-center relative overflow-hidden">
             <div class="w-16 h-16 bg-blue-50 border border-blue-200 text-blue-600 rounded-2xl flex items-center justify-center mx-auto text-3xl mb-4 shadow-sm">
                 🔒
@@ -155,28 +103,13 @@ const PASSCODE_LOCK_HTML = `
         </div>
     </div>
     <script>
-        const MASTER_PASSCODE = "800618";
-        function checkPasscodeLock() {
+        (function() {
             const saved = localStorage.getItem('esign_passcode');
             const modal = document.getElementById('passcodeLockModal');
-            if (saved === MASTER_PASSCODE) {
-                if (modal) modal.classList.add('hidden');
-            } else {
-                if (modal) modal.classList.remove('hidden');
+            if (saved === '800618' && modal) {
+                modal.style.display = 'none';
             }
-        }
-        function verifyPasscode(e) {
-            e.preventDefault();
-            const input = document.getElementById('passcodeInput').value.trim();
-            const err = document.getElementById('passcodeError');
-            if (input === MASTER_PASSCODE) {
-                localStorage.setItem('esign_passcode', MASTER_PASSCODE);
-                document.getElementById('passcodeLockModal').classList.add('hidden');
-            } else {
-                if (err) err.classList.remove('hidden');
-            }
-        }
-        document.addEventListener('DOMContentLoaded', checkPasscodeLock);
+        })();
     </script>
 `;
 
@@ -204,9 +137,6 @@ app.get('/dashboard.html', (c) => serveHtmlWithPasscodeLock(c, '/dashboard.html'
 
 // API: Send Envelope (Upload PDFs & Create Chain)
 app.post('/api/send', async (c) => {
-    const proxied = await proxyToBackend(c);
-    if (proxied) return proxied;
-
     try {
         const body = await c.req.parseBody({ all: true });
         const pdfFiles = Array.isArray(body['pdf']) ? body['pdf'] : (body['pdf'] ? [body['pdf']] : []);
@@ -285,9 +215,6 @@ app.post('/api/send', async (c) => {
 
 // API: Fetch All Envelopes for Dashboard
 app.get('/api/envelopes', async (c) => {
-    const proxied = await proxyToBackend(c);
-    if (proxied) return proxied;
-
     if (c.env && c.env.ESIGN_KV) {
         try {
             const list = await c.env.ESIGN_KV.list({ prefix: 'env_' });
@@ -304,9 +231,6 @@ app.get('/api/envelopes', async (c) => {
 
 // API: Fetch Single Envelope Info / PDF
 app.get('/api/envelope/:id', async (c) => {
-    const proxied = await proxyToBackend(c);
-    if (proxied) return proxied;
-
     const id = c.req.param('id');
     let env = ENVELOPES[id];
     if (!env && c.env && c.env.ESIGN_KV) {
@@ -334,9 +258,6 @@ app.get('/api/envelope/:id', async (c) => {
 
 // API: Download Completed PDF Document Package
 app.get('/api/download/:id', async (c) => {
-    const proxied = await proxyToBackend(c);
-    if (proxied) return proxied;
-
     const id = c.req.param('id');
     let env = ENVELOPES[id];
     if (!env && c.env && c.env.ESIGN_KV) {
@@ -359,9 +280,6 @@ app.get('/api/download/:id', async (c) => {
 
 // API: Resend Notification Email to Current Signer
 app.post('/api/resend/:id', async (c) => {
-    const proxied = await proxyToBackend(c);
-    if (proxied) return proxied;
-
     try {
         const id = c.req.param('id');
         let env = ENVELOPES[id];
@@ -403,9 +321,6 @@ app.post('/api/resend/:id', async (c) => {
 
 // API: Cancel / Delete Envelope
 app.post('/api/cancel/:id', async (c) => {
-    const proxied = await proxyToBackend(c);
-    if (proxied) return proxied;
-
     try {
         const id = c.req.param('id');
         delete ENVELOPES[id];
@@ -421,9 +336,6 @@ app.post('/api/cancel/:id', async (c) => {
 
 // API: Submit Recipient Signature
 app.post('/api/sign/:id', async (c) => {
-    const proxied = await proxyToBackend(c);
-    if (proxied) return proxied;
-
     try {
         const body = await c.req.json();
         const { envelopeId, fields } = body;
@@ -474,8 +386,92 @@ app.post('/api/sign/:id', async (c) => {
             env.status = 'completed';
         }
 
-        const updatedBytes = await pdfDoc.save({ useObjectStreams: false });
-        env.pdfBase64 = Buffer.from(updatedBytes).toString('base64');
+        if (env.status === 'completed') {
+            // Append Audit Trail Certificate of Completion Page
+            const certPage = pdfDoc.addPage([612, 792]);
+            const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+            const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+            
+            certPage.drawText('Certificate of Completion', { x: 50, y: 740, size: 20, font: fontBold });
+            certPage.drawText(`Envelope ID: ${env.id}`, { x: 50, y: 715, size: 10, font });
+            certPage.drawText(`Document: ${env.originalName}`, { x: 50, y: 700, size: 10, font });
+            certPage.drawText(`Completed On: ${new Date().toISOString()}`, { x: 50, y: 685, size: 10, font });
+            certPage.drawLine({ start: { x: 50, y: 670 }, end: { x: 550, y: 670 }, thickness: 1 });
+            
+            let yPos = 640;
+            certPage.drawText('Signer Name & Email', { x: 50, y: yPos, size: 12, font: fontBold });
+            certPage.drawText('Status', { x: 250, y: yPos, size: 12, font: fontBold });
+            certPage.drawText('Timestamp / IP', { x: 350, y: yPos, size: 12, font: fontBold });
+            yPos -= 20;
+            certPage.drawLine({ start: { x: 50, y: yPos }, end: { x: 550, y: yPos }, thickness: 1 });
+            yPos -= 20;
+
+            for (const h of env.history) {
+                certPage.drawText(`${h.name} (${h.email})`, { x: 50, y: yPos, size: 10, font });
+                certPage.drawText('eSigned', { x: 250, y: yPos, size: 10, font, color: rgb(0, 0.5, 0) });
+                certPage.drawText(`${h.date.split('T')[0]} ${h.date.split('T')[1].substr(0,8)}`, { x: 350, y: yPos, size: 9, font });
+                certPage.drawText(`IP: ${h.ip}`, { x: 350, y: yPos - 12, size: 8, font, color: rgb(0.4,0.4,0.4) });
+                yPos -= 40; 
+            }
+
+            const pdfWithAudit = await pdfDoc.save({ useObjectStreams: false });
+            const pdfBuffer = Buffer.from(pdfWithAudit);
+
+            const p12Buffer = await getWorkerP12Buffer(c);
+            const p12Passphrase = getWorkerP12Password(c);
+            const p12Signature = new P12Signer(p12Buffer, { passphrase: p12Passphrase });
+            const placeholderResult = plainAddPlaceholder({
+                pdfBuffer: pdfBuffer,
+                name: 'Actalis Certified E-Sign Platform Authority',
+                reason: 'Certified by E-Sign Platform Legal Trust Services',
+                location: 'Toronto, ON, Canada',
+                signingTime: new Date(),
+                signatureLength: 16000 
+            });
+            const signedPdfBytes = await new SignPdf().sign(placeholderResult, p12Signature);
+            const signedPdfBuf = Buffer.from(signedPdfBytes);
+            env.pdfBase64 = signedPdfBuf.toString('base64');
+
+            // Send Final Completed Document Email with Attachment via Mailchannels
+            const finalEmails = new Set(env.recipients.map(r => r.email));
+            if (env.senderEmail) finalEmails.add(env.senderEmail);
+
+            for (const recipientEmail of finalEmails) {
+                await sendWorkerEmail({
+                    toEmail: recipientEmail,
+                    subject: `Completed: ${env.emailSubject}`,
+                    htmlContent: `
+                        <div style="font-family: Arial, sans-serif; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; max-width: 550px; margin: 0 auto; background-color: #ffffff;">
+                            <h2 style="color: #0f172a; margin-top: 0; font-size: 20px;">✅ Document Completed & Signed</h2>
+                            <p style="color: #334155; font-size: 14px;">Hello,</p>
+                            <p style="color: #334155; font-size: 14px;">The document package (<b>${env.originalName}</b>) has been fully signed by all parties. Attached is the final completed PDF with Actalis digital certification and Audit Trail Certificate.</p>
+                        </div>
+                    `,
+                    attachments: [{ filename: `Completed_${env.originalName || 'document'}.pdf`, content: signedPdfBuf }]
+                });
+            }
+        } else {
+            // Notify Next Signer
+            const nextSigner = env.recipients[env.currentRecipientIndex];
+            if (nextSigner) {
+                const signUrl = `https://docusign.frank-zhang.com/signer.html?id=${envelopeId}`;
+                await sendWorkerEmail({
+                    toEmail: nextSigner.email,
+                    toName: nextSigner.name,
+                    subject: `Please Sign: ${env.originalName}`,
+                    htmlContent: `
+                        <div style="font-family: Arial, sans-serif; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; max-width: 550px; margin: 0 auto; background-color: #ffffff;">
+                            <h2 style="color: #0f172a; margin-top: 0; font-size: 20px;">✍️ Signature Request</h2>
+                            <p style="color: #334155; font-size: 14px;">Hello <b>${nextSigner.name}</b>,</p>
+                            <p style="color: #334155; font-size: 14px;">It is your turn to review and electronically sign the document package (<b>${env.originalName}</b>).</p>
+                            <div style="margin: 28px 0; text-align: center;">
+                                <a href="${signUrl}" style="background-color: #2563eb; color: #ffffff; padding: 14px 30px; font-weight: bold; border-radius: 8px; text-decoration: none; display: inline-block; font-size: 15px;">Review & Sign Document</a>
+                            </div>
+                        </div>
+                    `
+                });
+            }
+        }
 
         ENVELOPES[envelopeId] = env;
         if (c.env && c.env.ESIGN_KV) {

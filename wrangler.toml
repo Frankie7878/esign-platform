@@ -5,3 +5,7 @@ compatibility_flags = [ "nodejs_compat" ]
 
 [assets]
 directory = "./public"
+
+[[kv_namespaces]]
+binding = "ESIGN_KV"
+id = "8062481aacd34f19b442e2ce78ab2dbb"
