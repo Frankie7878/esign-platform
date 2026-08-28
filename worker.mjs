@@ -213,7 +213,12 @@ app.get('/api/envelope-info/:id', async (c) => {
     }
 
     const signer = env.recipients[idx];
-    const assignedFields = (env.assignedFields || []).filter(f => f.signerIndex === idx || f.signerEmail === (signer ? signer.email : ''));
+    const assignedFields = (env.assignedFields || []).filter(f => 
+        f.recipientIndex === idx || 
+        f.signerIndex === idx || 
+        (signer && f.signerEmail === signer.email) ||
+        (f.recipientIndex === undefined && f.signerIndex === undefined)
+    );
 
     return c.json({
         id: env.id,
