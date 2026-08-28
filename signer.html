@@ -388,8 +388,26 @@
             if (unfilledBoxes.length === 0) {
                 if (totalBoxes > 0 && filledBoxes === totalBoxes) {
                     if (!auto) finish();
-                } else if (!auto) {
-                    alert("No pre-assigned fields found for your account.");
+                } else if (totalBoxes === 0) {
+                    if (filledBoxes > 0) {
+                        if (!auto) finish();
+                    } else if (!auto) {
+                        // Free placement mode: Auto-place a signature box on Page 1 for instant 1-click signing
+                        const wrapper = document.querySelector('.page-wrap');
+                        if (wrapper) {
+                            const rect = wrapper.getBoundingClientRect();
+                            const newField = {
+                                type: 'signature',
+                                pageIndex: 0,
+                                xPercent: 0.35,
+                                yPercent: 0.75,
+                                wPercent: 0.25,
+                                hPercent: 0.08
+                            };
+                            const box = createGuideBox(wrapper, newField, rect.width, rect.height);
+                            handleGuideBoxClick(null, box);
+                        }
+                    }
                 }
                 return;
             }
