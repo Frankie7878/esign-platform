@@ -193,7 +193,9 @@ app.get('/api/envelope-info/:id', async (c) => {
     }
 
     const idxStr = c.req.query('idx');
-    const idx = idxStr ? parseInt(idxStr) : 0;
+    const idx = (idxStr !== undefined && idxStr !== null && idxStr !== '')
+        ? parseInt(idxStr, 10)
+        : (env.currentRecipientIndex !== undefined ? env.currentRecipientIndex : 0);
 
     if (idx < env.currentRecipientIndex) {
         return c.json({
@@ -224,6 +226,7 @@ app.get('/api/envelope-info/:id', async (c) => {
         id: env.id,
         signerName: signer ? signer.name : "Signer",
         signerEmail: signer ? signer.email : "",
+        signerIndex: idx,
         assignedFields: assignedFields,
         status: env.status
     });
@@ -282,7 +285,7 @@ app.post('/api/send', async (c) => {
 
         if (recipients.length > 0) {
             const firstSigner = recipients[0];
-            const signUrl = `https://docusign.frank-zhang.com/signer.html?id=${envelopeId}`;
+            const signUrl = `https://docusign.frank-zhang.com/signer.html?id=${envelopeId}&idx=0`;
             await sendWorkerEmail(c, {
                 toEmail: firstSigner.email,
                 toName: firstSigner.name,
@@ -389,7 +392,7 @@ app.post('/api/resend/:id', async (c) => {
         const currentSigner = env.recipients[env.currentRecipientIndex];
         if (!currentSigner) return c.json({ error: "No active recipient to resend email to" }, 400);
 
-        const signUrl = `https://docusign.frank-zhang.com/signer.html?id=${id}`;
+        const signUrl = `https://docusign.frank-zhang.com/signer.html?id=${id}&idx=${env.currentRecipientIndex}`;
         const emailSent = await sendWorkerEmail(c, {
             toEmail: currentSigner.email,
             toName: currentSigner.name,
@@ -565,7 +568,7 @@ app.post('/api/sign/:id', async (c) => {
             // Notify Next Signer
             const nextSigner = env.recipients[env.currentRecipientIndex];
             if (nextSigner) {
-                const signUrl = `https://docusign.frank-zhang.com/signer.html?id=${envelopeId}`;
+                const signUrl = `https://docusign.frank-zhang.com/signer.html?id=${envelopeId}&idx=${env.currentRecipientIndex}`;
                 await sendWorkerEmail(c, {
                     toEmail: nextSigner.email,
                     toName: nextSigner.name,

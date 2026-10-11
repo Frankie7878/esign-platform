@@ -217,7 +217,7 @@
                                 <span class="text-emerald-700 font-medium ml-auto bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">${signedTime}</span>
                             </div>`;
                     } else if (isCurrentTurn) {
-                        const signUrl = `${window.location.origin}/sign/${env.id}?idx=${idx}`;
+                        const signUrl = `${window.location.origin}/signer.html?id=${env.id}&idx=${idx}`;
                         signersHtml += `
                             <div class="flex items-center gap-2 text-xs bg-amber-50 p-2 rounded-lg border border-amber-200">
                                 <span class="text-amber-600 font-bold animate-spin">⏳</span>

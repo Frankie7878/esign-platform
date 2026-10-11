@@ -119,7 +119,8 @@
         const urlParams = new URLSearchParams(window.location.search);
         let id = urlParams.get('id') || window.location.pathname.split('/').pop();
         if (id === 'signer.html' || !id) id = urlParams.get('id') || '';
-        const signerIdx = urlParams.get('idx') || '0';
+        const rawIdx = urlParams.get('idx');
+        const signerIdx = (rawIdx !== null && rawIdx !== undefined && rawIdx !== '') ? rawIdx : null;
 
         let pdfDoc = null;
         let assignedFields = [];
@@ -129,7 +130,8 @@
         let sigPad = { canvas: null, ctx: null, drawing: false };
 
         window.onload = async () => {
-            const info = await (await fetch(`/api/envelope-info/${id}?idx=${signerIdx}`)).json();
+            const queryIdx = signerIdx !== null ? `?idx=${signerIdx}` : '';
+            const info = await (await fetch(`/api/envelope-info/${id}${queryIdx}`)).json();
             if (info.error) {
                 let icon = "⏳";
                 let title = "Not Your Turn Yet";
@@ -163,6 +165,7 @@
 
             document.getElementById('statusMsg').innerText = `Signing as: ${info.signerName}`;
             window.signerName = info.signerName || "";
+            window.currentSignerIndex = info.signerIndex !== undefined ? info.signerIndex : (signerIdx ? parseInt(signerIdx, 10) : 0);
             assignedFields = info.assignedFields || [];
 
             try {
@@ -653,7 +656,7 @@
 
             const fd = new FormData();
             fd.append('fields', JSON.stringify(fields));
-            fd.append('signerIndex', signerIdx);
+            fd.append('signerIndex', window.currentSignerIndex !== undefined ? window.currentSignerIndex : 0);
 
             try {
                 const res = await fetch(`/api/sign/${id}`, { method: 'POST', body: fd });
