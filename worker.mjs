@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import { PDFDocument, StandardFonts, rgb, PDFName, PDFDict, PDFArray } from 'pdf-lib';
 import { SignPdf } from '@signpdf/signpdf';
 import { plainAddPlaceholder } from '@signpdf/placeholder-plain';
 import { P12Signer } from '@signpdf/signer-p12';
@@ -475,13 +475,58 @@ app.post('/api/sign/:id', async (c) => {
             const w = width * f.wPercent;
             const h = height * f.hPercent;
 
+            // Strip any widget annotations that overlap this field so they never block signatures/dates
+            try {
+                const annots = page.node.Annots();
+                if (annots instanceof PDFArray) {
+                    const filtered = [];
+                    for (let i = 0; i < annots.size(); i++) {
+                        const annotRef = annots.get(i);
+                        const annot = pdfDoc.context.lookup(annotRef);
+                        if (annot instanceof PDFDict) {
+                            const subtype = annot.get(PDFName.of('Subtype'));
+                            if (subtype && subtype.toString() === '/Widget') {
+                                const rect = annot.get(PDFName.of('Rect'));
+                                if (rect instanceof PDFArray && rect.size() === 4) {
+                                    const rx1 = rect.get(0).asNumber();
+                                    const ry1 = rect.get(1).asNumber();
+                                    const rx2 = rect.get(2).asNumber();
+                                    const ry2 = rect.get(3).asNumber();
+                                    const rLeft = Math.min(rx1, rx2);
+                                    const rRight = Math.max(rx1, rx2);
+                                    const rBottom = Math.min(ry1, ry2);
+                                    const rTop = Math.max(ry1, ry2);
+
+                                    const fLeft = x;
+                                    const fRight = x + w;
+                                    const fBottom = y;
+                                    const fTop = y + h;
+
+                                    const overlaps = !(fRight < rLeft - 10 || fLeft > rRight + 10 || fTop < rBottom - 10 || fBottom > rTop + 10);
+                                    if (overlaps) {
+                                        continue; // discard overlapping widget overlay
+                                    }
+                                }
+                            }
+                        }
+                        filtered.push(annotRef);
+                    }
+                    if (filtered.length > 0) {
+                        page.node.set(PDFName.of('Annots'), pdfDoc.context.obj(filtered));
+                    } else {
+                        page.node.delete(PDFName.of('Annots'));
+                    }
+                }
+            } catch(e) {}
+
             if (f.value && f.value.startsWith('data:image/')) {
                 const imgBytes = Buffer.from(f.value.split(',')[1], 'base64');
                 const img = f.value.includes('png') ? await pdfDoc.embedPng(imgBytes) : await pdfDoc.embedJpg(imgBytes);
                 page.drawImage(img, { x, y, width: w, height: h });
             } else if (f.value) {
                 const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-                page.drawText(String(f.value), { x, y: y + 5, size: 10, font });
+                const textVal = String(f.value).replace(/[^\x00-\x7F]/g, ' ');
+                page.drawText(textVal, { x: x + 2, y: y + (h / 2) - 4, size: 10, font, color: rgb(0, 0, 0) });
             }
         }
 
@@ -499,6 +544,10 @@ app.post('/api/sign/:id', async (c) => {
         if (env.currentRecipientIndex >= env.recipients.length) {
             env.status = 'completed';
         }
+
+        // Always save stamped PDF into env.pdfBase64 so all multi-party signatures and dates persist!
+        const intermediateBytes = await pdfDoc.save({ useObjectStreams: false });
+        env.pdfBase64 = Buffer.from(intermediateBytes).toString('base64');
 
         if (env.status === 'completed') {
             // Append Audit Trail Certificate of Completion Page
