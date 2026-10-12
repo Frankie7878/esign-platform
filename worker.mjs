@@ -60,7 +60,7 @@ async function sendWorkerEmail(c, { toEmail, toName, subject, htmlContent, attac
             };
             if (attachments && attachments.length > 0) {
                 resendPayload.attachments = attachments.map(a => ({
-                    content: a.content.toString('base64'),
+                    content: typeof a.content === 'string' ? a.content : Buffer.from(a.content).toString('base64'),
                     filename: a.filename
                 }));
             }
@@ -600,17 +600,23 @@ app.post('/api/sign/:id', async (c) => {
             if (env.senderEmail) finalEmails.add(env.senderEmail);
 
             for (const recipientEmail of finalEmails) {
+                const downloadUrl = `https://docusign.frank-zhang.com/api/download/${envelopeId}`;
+                const cleanFileName = `Completed_${(env.originalName || 'document').replace(/\.pdf$/i, '')}.pdf`;
                 await sendWorkerEmail(c, {
                     toEmail: recipientEmail,
-                    subject: `Completed: ${env.emailSubject}`,
+                    subject: `Completed: ${env.originalName || env.emailSubject}`,
                     htmlContent: `
                         <div style="font-family: Arial, sans-serif; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; max-width: 550px; margin: 0 auto; background-color: #ffffff;">
                             <h2 style="color: #0f172a; margin-top: 0; font-size: 20px;">✅ Document Completed & Signed</h2>
                             <p style="color: #334155; font-size: 14px;">Hello,</p>
-                            <p style="color: #334155; font-size: 14px;">The document package (<b>${env.originalName}</b>) has been fully signed by all parties. Attached is the final completed PDF with Actalis digital certification and Audit Trail Certificate.</p>
+                            <p style="color: #334155; font-size: 14px;">The document package (<b>${env.originalName}</b>) has been fully signed by all parties.</p>
+                            <div style="margin: 24px 0; text-align: center;">
+                                <a href="${downloadUrl}" style="background-color: #059669; color: #ffffff; padding: 14px 28px; font-weight: bold; border-radius: 8px; text-decoration: none; display: inline-block; font-size: 15px;">📥 View & Download Completed PDF</a>
+                            </div>
+                            <p style="color: #64748b; font-size: 12px; margin-top: 16px;">Attached is also a copy of the final signed document with Actalis digital certification and Certificate of Completion.</p>
                         </div>
                     `,
-                    attachments: [{ filename: `Completed_${env.originalName || 'document'}.pdf`, content: signedPdfBuf }]
+                    attachments: [{ filename: cleanFileName, content: signedPdfBuf }]
                 });
             }
         } else {
