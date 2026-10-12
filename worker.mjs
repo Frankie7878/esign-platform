@@ -237,6 +237,7 @@ app.get('/', (c) => serveHtmlWithPasscodeLock(c, '/index.html'));
 app.get('/index.html', (c) => serveHtmlWithPasscodeLock(c, '/index.html'));
 app.get('/dashboard', (c) => serveHtmlWithPasscodeLock(c, '/dashboard.html'));
 app.get('/dashboard.html', (c) => serveHtmlWithPasscodeLock(c, '/dashboard.html'));
+app.get('/signer', (c) => serveHtmlWithPasscodeLock(c, '/signer.html'));
 app.get('/signer.html', (c) => serveHtmlWithPasscodeLock(c, '/signer.html'));
 app.get('/sign/:id', (c) => serveHtmlWithPasscodeLock(c, '/signer.html'));
 
