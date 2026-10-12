@@ -654,14 +654,24 @@
             const btn = document.getElementById('finishBtn'); 
             if (btn) { btn.innerText = "Saving..."; btn.disabled = true; }
 
-            const fd = new FormData();
-            fd.append('fields', JSON.stringify(fields));
-            fd.append('signerIndex', window.currentSignerIndex !== undefined ? window.currentSignerIndex : 0);
+            const payload = {
+                fields: fields,
+                signerIndex: window.currentSignerIndex !== undefined ? window.currentSignerIndex : 0
+            };
 
             try {
-                const res = await fetch(`/api/sign/${id}`, { method: 'POST', body: fd });
-                const data = await res.json();
-                if (data.success) {
+                const res = await fetch(`/api/sign/${id}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                let data;
+                try {
+                    data = await res.json();
+                } catch(err) {
+                    throw new Error(`Server returned HTTP ${res.status}`);
+                }
+                if (data && data.success) {
                     document.body.innerHTML = `
                     <div class="flex flex-col items-center justify-center min-h-screen bg-slate-50">
                         <div class="bg-white p-10 rounded-2xl shadow-xl text-center max-w-md border border-slate-200">
@@ -671,12 +681,13 @@
                         </div>
                     </div>`;
                 } else {
-                    alert("Error: " + data.error);
+                    alert("Error: " + (data && data.error ? data.error : "Unknown error"));
                     isSubmitting = false;
                     if (btn) { btn.innerText = "Finish"; btn.disabled = false; }
                 }
             } catch (e) {
-                alert("Network Error");
+                console.error("Submission error:", e);
+                alert("Submission failed: " + (e.message || "Network error. Please try again."));
                 isSubmitting = false;
                 if (btn) { btn.innerText = "Finish"; btn.disabled = false; }
             }

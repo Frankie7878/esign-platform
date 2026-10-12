@@ -47,6 +47,12 @@ function deleteEnvelope(id) {
 }
 
 function getP12CertificateBuffer() {
+    if (CONFIG.P12_FILE) {
+        const customP12Path = path.resolve(__dirname, CONFIG.P12_FILE);
+        if (fs.existsSync(customP12Path)) {
+            return fs.readFileSync(customP12Path);
+        }
+    }
     const certPath = path.join(__dirname, 'certificate.p12');
     if (fs.existsSync(certPath)) {
         return fs.readFileSync(certPath);
@@ -76,6 +82,16 @@ function getP12CertificateBuffer() {
     const buf = Buffer.from(p12Der, 'binary');
     try { fs.writeFileSync(certPath, buf); } catch(e){}
     return buf;
+}
+
+function getP12Passphrase() {
+    if (CONFIG.P12_FILE) {
+        const customP12Path = path.resolve(__dirname, CONFIG.P12_FILE);
+        if (fs.existsSync(customP12Path)) {
+            return CONFIG.P12_PASSWORD || '';
+        }
+    }
+    return 'password';
 }
 
 function repairPdfPageTree(doc) {
@@ -146,25 +162,6 @@ function stripPdfEncryptionFile(inputPath, outputPath) {
     return false;
 }
 
-// --- IDENTITY (Self-Signed Cert) ---
-let p12Buffer;
-function generateIdentity() {
-    const keys = forge.pki.rsa.generateKeyPair(2048);
-    const cert = forge.pki.createCertificate();
-    cert.publicKey = keys.publicKey;
-    cert.serialNumber = '01';
-    cert.validity.notBefore = new Date();
-    cert.validity.notAfter.setFullYear(cert.validity.notBefore.getFullYear() + 5);
-    const attrs = [
-        { name: 'commonName', value: 'E-Sign Security Certification Authority' },
-        { name: 'organizationName', value: 'E-Sign Platform Legal Trust Services' },
-        { name: 'organizationalUnitName', value: 'Document Cryptographic Integrity Services' }
-    ];
-    cert.setSubject(attrs); cert.setIssuer(attrs);
-    cert.sign(keys.privateKey, forge.md.sha256.create());
-    const p12Asn1 = forge.pkcs12.toPkcs12Asn1(keys.privateKey, cert, 'password', { algorithm: '3des' });
-    p12Buffer = Buffer.from(forge.asn1.toDer(p12Asn1).getBytes(), 'binary');
-}
 const upload = multer({ dest: 'uploads/' });
 app.use(express.static('public'));
 
@@ -694,7 +691,8 @@ async function finalizeEnvelope(id, env) {
         const pdfBuffer = Buffer.from(pdfWithAudit);
 
         const p12Buffer = getP12CertificateBuffer();
-        const p12Signature = new P12Signer(p12Buffer, { passphrase: 'password' });
+        const p12Passphrase = getP12Passphrase();
+        const p12Signature = new P12Signer(p12Buffer, { passphrase: p12Passphrase });
         const placeholderResult = plainAddPlaceholder({
             pdfBuffer: pdfBuffer,
             name: 'E-Sign Security Certification Authority',

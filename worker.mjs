@@ -3,6 +3,7 @@ import { PDFDocument, StandardFonts, rgb, PDFName, PDFDict, PDFArray } from 'pdf
 import { SignPdf } from '@signpdf/signpdf';
 import { plainAddPlaceholder } from '@signpdf/placeholder-plain';
 import { P12Signer } from '@signpdf/signer-p12';
+import { Signer } from '@signpdf/utils';
 import forge from 'node-forge';
 
 const app = new Hono();
@@ -12,6 +13,73 @@ const GITHUB_CLIENT_SECRET = '03bc8d55baa1b578e1ccc95787494b25e76c997d';
 
 // Global In-Memory Fallback
 const ENVELOPES = {};
+
+// Fast PEM Signer implementation that skips slow PBKDF decryption on every invocation
+class FastPemSigner extends Signer {
+    constructor(key, certificates) {
+        super();
+        this.key = key;
+        this.certificates = certificates;
+        this.signerCert = certificates[0];
+    }
+    async sign(pdfBuffer, signingTime = undefined) {
+        const p7 = forge.pkcs7.createSignedData();
+        p7.content = forge.util.createBuffer(pdfBuffer.toString('binary'));
+        this.certificates.forEach(c => p7.addCertificate(c));
+        p7.addSigner({
+            key: this.key,
+            certificate: this.signerCert,
+            digestAlgorithm: forge.pki.oids.sha256,
+            authenticatedAttributes: [
+                { type: forge.pki.oids.contentType, value: forge.pki.oids.data },
+                { type: forge.pki.oids.signingTime, value: signingTime || new Date() },
+                { type: forge.pki.oids.messageDigest }
+            ]
+        });
+        p7.sign({ detached: true });
+        return Buffer.from(forge.asn1.toDer(p7.toAsn1()).getBytes(), 'binary');
+    }
+}
+
+let cachedWorkerSigner = null;
+
+async function getWorkerSigner(c) {
+    if (cachedWorkerSigner) return cachedWorkerSigner;
+
+    if (c.env && c.env.ESIGN_KV) {
+        try {
+            const keyPem = await c.env.ESIGN_KV.get('ACTALIS_KEY_PEM');
+            const certsPem = await c.env.ESIGN_KV.get('ACTALIS_CERTS_PEM');
+            if (keyPem && certsPem) {
+                const privateKey = forge.pki.privateKeyFromPem(keyPem);
+                const certs = certsPem
+                    .split('-----END CERTIFICATE-----')
+                    .filter(s => s.trim().length > 0)
+                    .map(s => forge.pki.certificateFromPem(s + '-----END CERTIFICATE-----\n'));
+                cachedWorkerSigner = new FastPemSigner(privateKey, certs);
+                return cachedWorkerSigner;
+            }
+        } catch(e) {
+            console.error("Fast PEM signer init error:", e);
+        }
+    }
+
+    const p12Buffer = await getWorkerP12Buffer(c);
+    const p12Passphrase = getWorkerP12Password(c);
+    cachedWorkerSigner = new P12Signer(p12Buffer, { passphrase: p12Passphrase });
+    return cachedWorkerSigner;
+}
+
+// Helper: Get Envelope from KV first (always fresh), then in-memory fallback
+async function getEnvelopeById(c, id) {
+    if (c.env && c.env.ESIGN_KV) {
+        try {
+            const itemStr = await c.env.ESIGN_KV.get(`env_${id}`);
+            if (itemStr) return JSON.parse(itemStr);
+        } catch(e){}
+    }
+    return ENVELOPES[id] || null;
+}
 
 // Helper: Get Actalis P12 Certificate Buffer from Cloudflare KV
 async function getWorkerP12Buffer(c) {
@@ -175,13 +243,7 @@ app.get('/sign/:id', (c) => serveHtmlWithPasscodeLock(c, '/signer.html'));
 // API: Fetch Signer Info & Assigned Fields
 app.get('/api/envelope-info/:id', async (c) => {
     const id = c.req.param('id');
-    let env = ENVELOPES[id];
-    if (!env && c.env && c.env.ESIGN_KV) {
-        try {
-            const itemStr = await c.env.ESIGN_KV.get(`env_${id}`);
-            if (itemStr) env = JSON.parse(itemStr);
-        } catch(e){}
-    }
+    const env = await getEnvelopeById(c, id);
 
     if (!env) return c.json({ error: "Document package not found or link has expired." }, 404);
 
@@ -286,7 +348,7 @@ app.post('/api/send', async (c) => {
         if (recipients.length > 0) {
             const firstSigner = recipients[0];
             const signUrl = `https://docusign.frank-zhang.com/signer.html?id=${envelopeId}&idx=0`;
-            await sendWorkerEmail(c, {
+            const sendPromise = sendWorkerEmail(c, {
                 toEmail: firstSigner.email,
                 toName: firstSigner.name,
                 subject: `Please Sign: ${envObj.originalName}`,
@@ -301,6 +363,11 @@ app.post('/api/send', async (c) => {
                     </div>
                 `
             });
+            if (c.executionCtx && typeof c.executionCtx.waitUntil === 'function') {
+                c.executionCtx.waitUntil(sendPromise);
+            } else {
+                await sendPromise;
+            }
         }
 
         return c.json({ success: true, envelopeId });
@@ -329,13 +396,7 @@ app.get('/api/envelopes', async (c) => {
 // API: Fetch Single Envelope Info / PDF
 app.get('/api/envelope/:id', async (c) => {
     const id = c.req.param('id');
-    let env = ENVELOPES[id];
-    if (!env && c.env && c.env.ESIGN_KV) {
-        try {
-            const itemStr = await c.env.ESIGN_KV.get(`env_${id}`);
-            if (itemStr) env = JSON.parse(itemStr);
-        } catch(e){}
-    }
+    const env = await getEnvelopeById(c, id);
 
     if (!env) return c.json({ error: "Envelope not found" }, 404);
 
@@ -356,13 +417,7 @@ app.get('/api/envelope/:id', async (c) => {
 // API: Download Completed PDF Document Package
 app.get('/api/download/:id', async (c) => {
     const id = c.req.param('id');
-    let env = ENVELOPES[id];
-    if (!env && c.env && c.env.ESIGN_KV) {
-        try {
-            const itemStr = await c.env.ESIGN_KV.get(`env_${id}`);
-            if (itemStr) env = JSON.parse(itemStr);
-        } catch(e){}
-    }
+    const env = await getEnvelopeById(c, id);
 
     if (!env || !env.pdfBase64) return c.text("PDF file not found", 404);
 
@@ -379,13 +434,7 @@ app.get('/api/download/:id', async (c) => {
 app.post('/api/resend/:id', async (c) => {
     try {
         const id = c.req.param('id');
-        let env = ENVELOPES[id];
-        if (!env && c.env && c.env.ESIGN_KV) {
-            try {
-                const itemStr = await c.env.ESIGN_KV.get(`env_${id}`);
-                if (itemStr) env = JSON.parse(itemStr);
-            } catch(e){}
-        }
+        const env = await getEnvelopeById(c, id);
 
         if (!env) return c.json({ error: "Envelope not found" }, 404);
 
@@ -393,7 +442,7 @@ app.post('/api/resend/:id', async (c) => {
         if (!currentSigner) return c.json({ error: "No active recipient to resend email to" }, 400);
 
         const signUrl = `https://docusign.frank-zhang.com/signer.html?id=${id}&idx=${env.currentRecipientIndex}`;
-        const emailSent = await sendWorkerEmail(c, {
+        const sendPromise = sendWorkerEmail(c, {
             toEmail: currentSigner.email,
             toName: currentSigner.name,
             subject: `Reminder: Please Sign ${env.originalName}`,
@@ -408,8 +457,13 @@ app.post('/api/resend/:id', async (c) => {
                 </div>
             `
         });
+        if (c.executionCtx && typeof c.executionCtx.waitUntil === 'function') {
+            c.executionCtx.waitUntil(sendPromise);
+        } else {
+            await sendPromise;
+        }
 
-        return c.json({ success: true, message: `Reminder email resent to ${currentSigner.email}`, sentTo: currentSigner.email, emailSent });
+        return c.json({ success: true, message: `Reminder email resent to ${currentSigner.email}`, sentTo: currentSigner.email });
     } catch(e) {
         console.error("Worker RESEND ERROR:", e);
         return c.json({ error: e.message }, 500);
@@ -436,14 +490,14 @@ app.post('/api/sign/:id', async (c) => {
     try {
         const id = c.req.param('id');
         let fields = [];
-        const contentType = c.req.header('Content-Type') || '';
+        const contentType = (c.req.header('content-type') || '').toLowerCase();
         
         if (contentType.includes('application/json')) {
             const body = await c.req.json();
             fields = body.fields || [];
         } else {
-            const body = await c.req.parseBody();
-            if (body.fields) {
+            const body = await c.req.parseBody({ all: true });
+            if (body && body.fields) {
                 try {
                     fields = typeof body.fields === 'string' ? JSON.parse(body.fields) : body.fields;
                 } catch(e) {
@@ -453,13 +507,7 @@ app.post('/api/sign/:id', async (c) => {
         }
 
         const envelopeId = id;
-        let env = ENVELOPES[envelopeId];
-        if (!env && c.env && c.env.ESIGN_KV) {
-            try {
-                const itemStr = await c.env.ESIGN_KV.get(`env_${envelopeId}`);
-                if (itemStr) env = JSON.parse(itemStr);
-            } catch(e){}
-        }
+        let env = await getEnvelopeById(c, envelopeId);
 
         if (!env) return c.json({ error: "Envelope not found" }, 404);
 
@@ -545,9 +593,7 @@ app.post('/api/sign/:id', async (c) => {
             env.status = 'completed';
         }
 
-        // Always save stamped PDF into env.pdfBase64 so all multi-party signatures and dates persist!
-        const intermediateBytes = await pdfDoc.save({ useObjectStreams: false });
-        env.pdfBase64 = Buffer.from(intermediateBytes).toString('base64');
+        let signedPdfBuf = null;
 
         if (env.status === 'completed') {
             // Append Audit Trail Certificate of Completion Page
@@ -577,12 +623,11 @@ app.post('/api/sign/:id', async (c) => {
                 yPos -= 40; 
             }
 
+            // Save single pass with audit trail
             const pdfWithAudit = await pdfDoc.save({ useObjectStreams: false });
             const pdfBuffer = Buffer.from(pdfWithAudit);
 
-            const p12Buffer = await getWorkerP12Buffer(c);
-            const p12Passphrase = getWorkerP12Password(c);
-            const p12Signature = new P12Signer(p12Buffer, { passphrase: p12Passphrase });
+            const signer = await getWorkerSigner(c);
             const placeholderResult = plainAddPlaceholder({
                 pdfBuffer: pdfBuffer,
                 name: 'Actalis Certified E-Sign Platform Authority',
@@ -591,60 +636,78 @@ app.post('/api/sign/:id', async (c) => {
                 signingTime: new Date(),
                 signatureLength: 16000 
             });
-            const signedPdfBytes = await new SignPdf().sign(placeholderResult, p12Signature);
-            const signedPdfBuf = Buffer.from(signedPdfBytes);
+            const signedPdfBytes = await new SignPdf().sign(placeholderResult, signer);
+            signedPdfBuf = Buffer.from(signedPdfBytes);
             env.pdfBase64 = signedPdfBuf.toString('base64');
-
-            // Send Final Completed Document Email with Attachment via Mailchannels
-            const finalEmails = new Set(env.recipients.map(r => r.email));
-            if (env.senderEmail) finalEmails.add(env.senderEmail);
-
-            for (const recipientEmail of finalEmails) {
-                const downloadUrl = `https://docusign.frank-zhang.com/api/download/${envelopeId}`;
-                const cleanFileName = `Completed_${(env.originalName || 'document').replace(/\.pdf$/i, '')}.pdf`;
-                await sendWorkerEmail(c, {
-                    toEmail: recipientEmail,
-                    subject: `Completed: ${env.originalName || env.emailSubject}`,
-                    htmlContent: `
-                        <div style="font-family: Arial, sans-serif; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; max-width: 550px; margin: 0 auto; background-color: #ffffff;">
-                            <h2 style="color: #0f172a; margin-top: 0; font-size: 20px;">✅ Document Completed & Signed</h2>
-                            <p style="color: #334155; font-size: 14px;">Hello,</p>
-                            <p style="color: #334155; font-size: 14px;">The document package (<b>${env.originalName}</b>) has been fully signed by all parties.</p>
-                            <div style="margin: 24px 0; text-align: center;">
-                                <a href="${downloadUrl}" style="background-color: #059669; color: #ffffff; padding: 14px 28px; font-weight: bold; border-radius: 8px; text-decoration: none; display: inline-block; font-size: 15px;">📥 View & Download Completed PDF</a>
-                            </div>
-                            <p style="color: #64748b; font-size: 12px; margin-top: 16px;">Attached is also a copy of the final signed document with Actalis digital certification and Certificate of Completion.</p>
-                        </div>
-                    `,
-                    attachments: [{ filename: cleanFileName, content: signedPdfBuf }]
-                });
-            }
         } else {
-            // Notify Next Signer
-            const nextSigner = env.recipients[env.currentRecipientIndex];
-            if (nextSigner) {
-                const signUrl = `https://docusign.frank-zhang.com/signer.html?id=${envelopeId}&idx=${env.currentRecipientIndex}`;
-                await sendWorkerEmail(c, {
-                    toEmail: nextSigner.email,
-                    toName: nextSigner.name,
-                    subject: `Please Sign: ${env.originalName}`,
-                    htmlContent: `
-                        <div style="font-family: Arial, sans-serif; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; max-width: 550px; margin: 0 auto; background-color: #ffffff;">
-                            <h2 style="color: #0f172a; margin-top: 0; font-size: 20px;">✍️ Signature Request</h2>
-                            <p style="color: #334155; font-size: 14px;">Hello <b>${nextSigner.name}</b>,</p>
-                            <p style="color: #334155; font-size: 14px;">It is your turn to review and electronically sign the document package (<b>${env.originalName}</b>).</p>
-                            <div style="margin: 28px 0; text-align: center;">
-                                <a href="${signUrl}" style="background-color: #2563eb; color: #ffffff; padding: 14px 30px; font-weight: bold; border-radius: 8px; text-decoration: none; display: inline-block; font-size: 15px;">Review & Sign Document</a>
-                            </div>
-                        </div>
-                    `
-                });
-            }
+            // Intermediate signer: single save into env.pdfBase64 for next signer
+            const intermediateBytes = await pdfDoc.save({ useObjectStreams: false });
+            env.pdfBase64 = Buffer.from(intermediateBytes).toString('base64');
         }
 
+        // Persist updated envelope state to memory and KV immediately
         ENVELOPES[envelopeId] = env;
         if (c.env && c.env.ESIGN_KV) {
             try { await c.env.ESIGN_KV.put(`env_${envelopeId}`, JSON.stringify(env)); } catch(e){}
+        }
+
+        // Asynchronously dispatch transactional emails via executionCtx.waitUntil so HTTP response is instant
+        const emailPromise = (async () => {
+            try {
+                if (env.status === 'completed') {
+                    const finalEmails = new Set(env.recipients.map(r => r.email));
+                    if (env.senderEmail) finalEmails.add(env.senderEmail);
+
+                    for (const recipientEmail of finalEmails) {
+                        const downloadUrl = `https://docusign.frank-zhang.com/api/download/${envelopeId}`;
+                        const cleanFileName = `Completed_${(env.originalName || 'document').replace(/\.pdf$/i, '')}.pdf`;
+                        await sendWorkerEmail(c, {
+                            toEmail: recipientEmail,
+                            subject: `Completed: ${env.originalName || env.emailSubject}`,
+                            htmlContent: `
+                                <div style="font-family: Arial, sans-serif; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; max-width: 550px; margin: 0 auto; background-color: #ffffff;">
+                                    <h2 style="color: #0f172a; margin-top: 0; font-size: 20px;">✅ Document Completed & Signed</h2>
+                                    <p style="color: #334155; font-size: 14px;">Hello,</p>
+                                    <p style="color: #334155; font-size: 14px;">The document package (<b>${env.originalName}</b>) has been fully signed by all parties.</p>
+                                    <div style="margin: 24px 0; text-align: center;">
+                                        <a href="${downloadUrl}" style="background-color: #059669; color: #ffffff; padding: 14px 28px; font-weight: bold; border-radius: 8px; text-decoration: none; display: inline-block; font-size: 15px;">📥 View & Download Completed PDF</a>
+                                    </div>
+                                    <p style="color: #64748b; font-size: 12px; margin-top: 16px;">Attached is also a copy of the final signed document with Actalis digital certification and Certificate of Completion.</p>
+                                </div>
+                            `,
+                            attachments: signedPdfBuf ? [{ filename: cleanFileName, content: signedPdfBuf }] : []
+                        });
+                    }
+                } else {
+                    const nextSigner = env.recipients[env.currentRecipientIndex];
+                    if (nextSigner) {
+                        const signUrl = `https://docusign.frank-zhang.com/signer.html?id=${envelopeId}&idx=${env.currentRecipientIndex}`;
+                        await sendWorkerEmail(c, {
+                            toEmail: nextSigner.email,
+                            toName: nextSigner.name,
+                            subject: `Please Sign: ${env.originalName}`,
+                            htmlContent: `
+                                <div style="font-family: Arial, sans-serif; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; max-width: 550px; margin: 0 auto; background-color: #ffffff;">
+                                    <h2 style="color: #0f172a; margin-top: 0; font-size: 20px;">✍️ Signature Request</h2>
+                                    <p style="color: #334155; font-size: 14px;">Hello <b>${nextSigner.name}</b>,</p>
+                                    <p style="color: #334155; font-size: 14px;">It is your turn to review and electronically sign the document package (<b>${env.originalName}</b>).</p>
+                                    <div style="margin: 28px 0; text-align: center;">
+                                        <a href="${signUrl}" style="background-color: #2563eb; color: #ffffff; padding: 14px 30px; font-weight: bold; border-radius: 8px; text-decoration: none; display: inline-block; font-size: 15px;">Review & Sign Document</a>
+                                    </div>
+                                </div>
+                            `
+                        });
+                    }
+                }
+            } catch(mailErr) {
+                console.error("Async email error:", mailErr);
+            }
+        })();
+
+        if (c.executionCtx && typeof c.executionCtx.waitUntil === 'function') {
+            c.executionCtx.waitUntil(emailPromise);
+        } else {
+            await emailPromise;
         }
 
         return c.json({ success: true, completed: env.status === 'completed' });
